@@ -1,23 +1,32 @@
-import streamlit as st, os, io, webbrowser, base64, time, warnings, logging, random
+import streamlit as st
+import os, io, webbrowser, base64, time, warnings, logging, random
+import requests
+from io import BytesIO
+from PIL import Image
+
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, LSTM, GRU, Conv1D, Flatten, Bidirectional, LeakyReLU, ELU, GlobalAveragePooling1D, MultiHeadAttention, LayerNormalization, Activation
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam, AdamW, RMSprop
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback
-import numpy as np, pandas as pd, matplotlib.pyplot as plt, plotly.express as px, plotly.graph_objects as go
-import statsmodels.api as sm, chardet, holidays, torch, tensorflow as tf, lightgbm as lgb, catboost as cb
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import statsmodels.api as sm
+import chardet
+import holidays
+import torch
+import tensorflow as tf
+import lightgbm as lgb
+import catboost as cb
 import optuna
 from darts.models import NHiTSModel
-from tensorflow.keras.layers import LeakyReLU
 from darts import TimeSeries
 import base64
 from neuralforecast.models import NHITS
 from neuralforecast.losses.pytorch import MAE
-from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.layers import Input, Dense, Flatten, LSTM, Dropout, GRU, Conv1D, MaxPooling1D, Bidirectional, LeakyReLU, ELU, GlobalAveragePooling1D, BatchNormalization, MultiHeadAttention, LayerNormalization
-from tensorflow.keras.optimizers import Adam, AdamW
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback
-from tensorflow.keras.regularizers import l2
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor, VotingRegressor, AdaBoostRegressor
 from sklearn.linear_model import Ridge, Lasso, HuberRegressor, ElasticNet
@@ -30,7 +39,6 @@ from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from datetime import datetime, timedelta
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import Image
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 warnings.filterwarnings("ignore")
@@ -46,85 +54,38 @@ np.random.seed(seed)
 tf.random.set_seed(seed)
 print(f"Utilisation du seed: {seed}")
 
-# Initialisation des variables de session
-if 'holidays' not in st.session_state:
-    st.session_state.holidays = []
-if 'holiday_weights' not in st.session_state:
-    st.session_state.holiday_weights = []
-if 'outliers' not in st.session_state:
-    st.session_state.outliers = []
-if 'predictions_csv' not in st.session_state:
-    st.session_state.predictions_csv = None
-if 'prediction_type' not in st.session_state:
-    st.session_state.prediction_type = "Jour"
-if 'working_hours_start' not in st.session_state:
-    st.session_state.working_hours_start = "08:00"
-if 'working_hours_end' not in st.session_state:
-    st.session_state.working_hours_end = "18:00"
-if 'predict_holidays_as_zero' not in st.session_state:
-    st.session_state.predict_holidays_as_zero = False
-if 'predict_saturday_as_zero' not in st.session_state:
-    st.session_state.predict_saturday_as_zero = False
-if 'predict_sunday_as_zero' not in st.session_state:
-    st.session_state.predict_sunday_as_zero = False
-if 'predict_weekends_as_zero' not in st.session_state:
-    st.session_state.predict_weekends_as_zero = False
+# =======================
+# FONCTIONS UTILITAIRES
+# =======================
 
-def get_base64_image(image_path):
+def load_image_from_url(url):
+    """
+    Charge une image depuis une URL et la retourne sous forme d'objet PIL.Image.
+    """
     try:
-        with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
+        response = requests.get(url)
+        response.raise_for_status()
+        return Image.open(BytesIO(response.content))
     except Exception as e:
-        st.error(f"Erreur lors du chargement de l'image : {image_path} ({e})")
+        st.error(f"Erreur lors du chargement de l'image depuis l'URL : {url} ({e})")
         return None
 
-st.markdown(
+def get_base64_image_from_url(url):
     """
-    <style>
-    .block-container { padding-top: 0px !important; margin-top: 0px !important; }
-    header { margin: 0px !important; padding: 0px !important; }
-    .marquee-container { margin-bottom: 0px !important; padding-bottom: 5px !important; }
-    img { margin-top: 0px !important; padding-top: 0px !important; }
-    </style>
-    """, unsafe_allow_html=True
-)
+    Télécharge une image depuis une URL et la convertit en base64 (string).
+    Utile pour l'intégrer dans du HTML (balises <img>, etc.).
+    """
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        return base64.b64encode(response.content).decode()
+    except Exception as e:
+        st.error(f"Erreur lors du chargement de l'image depuis l'URL : {url} ({e})")
+        return None
 
-st.markdown(
-    f"""
-    <style>
-    .block-container {{
-        padding-top: 0px !important;
-        margin-top: 0px !important;
-        background: white;
-        max-width: 100%;
-        margin: auto;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }}
-    body {{ background-color: #f5f5f5; font-family: 'Arial', sans-serif; color: #333; }}
-    .marquee-container {{
-        position: fixed; top: 0; left: 0; width: 100%;
-        background: rgba(0, 64, 128, 0.9); padding: 10px 0;
-        text-align: center; z-index: 9999; overflow: hidden; white-space: nowrap;
-    }}
-    .marquee-text {{
-        display: inline-block; animation: marquee 10s linear infinite;
-        font-size: 2rem; font-weight: bold; color: white;
-    }}
-    @keyframes marquee {{ from {{ transform: translateX(100%); }} to {{ transform: translateX(-100%); }} }}
-    .button-container {{ position: fixed; top: 15px; left: 10px; z-index: 100; }}
-    .custom-button {{
-        background-color: #004080; color: white; border: none;
-        padding: 10px 20px; border-radius: 5px; font-size: 14px;
-        font-weight: bold; cursor: pointer; transition: 0.3s; text-decoration: none;
-        display: inline-block;
-    }}
-    .custom-button:hover {{ background-color: #003366; }}
-    .block-container {{ padding-top: 0px !important; }}
-    </style>
-    </div>
-    """, unsafe_allow_html=True
-)
+# =======================
+# CLASSES & CALLBACKS
+# =======================
 
 class LearningRateLogger(Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -162,7 +123,10 @@ class GraphConvolution(tf.keras.layers.Layer):
         output = tf.matmul(A_batch, support)
         return output
 
-# Fonction pour déterminer la saison à partir du mois
+# =======================
+# FONCTIONS HIMA
+# =======================
+
 def get_season(month):
     if month in [12, 1, 2]:
         return "hiver"
@@ -179,9 +143,6 @@ class FTTHPredictor:
         self.prediction_type = prediction_type
         self.encoder = OneHotEncoder(sparse_output=False)
 
-    # ------------------------------
-    # Méthodes existantes (détection CSV, preprocess, etc.)
-    # ------------------------------
     def detect_separator_and_encoding(self, filepath):
         with open(filepath, 'rb') as f:
             result = chardet.detect(f.read(10000))
@@ -208,6 +169,7 @@ class FTTHPredictor:
 
     def detect_recurring_holidays(self, data, threshold=0.2):
         data['month_day'] = data['date'].dt.strftime('%m-%d')
+        from collections import defaultdict
         holiday_candidates = defaultdict(list)
         for date_, volume in data.groupby('month_day')['volume'].mean().items():
             if volume < data['volume'].mean() * threshold:
@@ -230,26 +192,24 @@ class FTTHPredictor:
         from scipy.signal import savgol_filter
         from statsmodels.tsa.seasonal import seasonal_decompose
 
-        # Extraction des caractéristiques temporelles existantes
         data['month'] = data['date'].dt.month
         data['day_of_month'] = data['date'].dt.day
         data['week_of_year'] = data['date'].dt.isocalendar().week
         data['day_of_week'] = data['date'].dt.weekday
         data['is_weekend'] = (data['day_of_week'] >= 5).astype(int)
 
-        # Transformation cyclique des jours et mois
+        # Transformations cycliques
         data['sin_day'] = np.sin(2 * np.pi * data['day_of_week'] / 7)
         data['cos_day'] = np.cos(2 * np.pi * data['day_of_week'] / 7)
         data['sin_month'] = np.sin(2 * np.pi * data['month'] / 12)
         data['cos_month'] = np.cos(2 * np.pi * data['month'] / 12)
 
-        # Ajout de la variable 'saison' et encodage one-hot
+        # Encodage "saison"
         data['season'] = data['month'].apply(get_season)
         season_dummies = pd.get_dummies(data['season'], prefix='season')
         data = pd.concat([data, season_dummies], axis=1)
         data.drop('season', axis=1, inplace=True)
 
-        # Autres transformations
         data['smoothed_volume'] = data['volume'].rolling(window=5, min_periods=1).mean()
         data['ema_volume'] = data['volume'].ewm(span=5, adjust=False).mean()
 
@@ -261,7 +221,6 @@ class FTTHPredictor:
 
         data['rolling_mean_7'] = data['volume'].rolling(window=7, min_periods=1).mean()
         data['rolling_std_7'] = data['volume'].rolling(window=7, min_periods=1).std().fillna(0)
-
         data['adaptive_rolling_mean'] = self.adaptive_rolling_mean(data, base_window=7)
         data['diff'] = data['volume'].diff().fillna(0)
 
@@ -686,12 +645,6 @@ class FTTHPredictor:
             return final_model
 
         elif model_type_lower == 'ttm':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import LeakyReLU
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import Adam
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(Dense(1024, input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.001)))
             model.add(LeakyReLU(alpha=0.2))
@@ -715,7 +668,7 @@ class FTTHPredictor:
             model.add(LeakyReLU(alpha=0.2))
             model.add(Dropout(0.3))
             model.add(Dense(1, activation='linear'))
-            optimizer = Adam(learning_rate=0.0005, weight_decay=1e-5)
+            optimizer = Adam(learning_rate=0.0005, decay=1e-5)
             model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
             st.write("📊 **Résumé du modèle TTM :**")
             st.text(model.summary())
@@ -725,12 +678,8 @@ class FTTHPredictor:
             model.fit(X_train, y_train, epochs=200, batch_size=8, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
             st.write("Modèle TTM entraîné.")
             return model
+
         elif model_type_lower == 'llama':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(Dense(512, input_shape=(X_train.shape[1],), activation='swish', kernel_regularizer=l2(0.0005)))
             model.add(Dropout(0.3))
@@ -748,12 +697,8 @@ class FTTHPredictor:
             lr_logger = LearningRateLogger()
             model.fit(X_train, y_train, epochs=200, batch_size=8, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
             return model
+
         elif model_type_lower == 'timexer':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import Adam
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(Dense(1024, input_shape=(X_train.shape[1],), activation='relu'))
             model.add(Dropout(0.2))
@@ -764,7 +709,7 @@ class FTTHPredictor:
             model.add(Dense(250, activation='relu', kernel_regularizer=l2(0.01)))
             model.add(Dropout(0.2))
             model.add(Dense(1, activation='linear'))
-            optimizer = Adam(learning_rate=0.0005, weight_decay=1e-5)
+            optimizer = Adam(learning_rate=0.0005)
             model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
             st.write("📊 **Résumé du modèle Timexer :**")
             st.text(model.summary())
@@ -773,13 +718,8 @@ class FTTHPredictor:
             model.fit(X_train, y_train, epochs=350, batch_size=8, validation_split=0.2, callbacks=[early_stop], verbose=2)
             st.write("Modèle Timexer entraîné.")
             return model
+
         elif model_type_lower == 'nhits':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.regularizers import l2
-            from tensorflow.keras.layers import BatchNormalization, Dense, Dropout
-            from tensorflow.keras.optimizers import Adam
-            from tensorflow.keras.callbacks import EarlyStopping, LearningRateScheduler
             model = Sequential()
             model.add(Dense(1024, input_shape=(X_train.shape[1],), activation='swish'))
             model.add(Dropout(0.3))
@@ -797,17 +737,13 @@ class FTTHPredictor:
             def scheduler(epoch, lr):
                 return lr * 0.95 if epoch > 10 else lr
             early_stop = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True, verbose=2)
-            lr_scheduler = LearningRateScheduler(scheduler)
+            lr_scheduler = tf.keras.callbacks.LearningRateScheduler(scheduler)
             model.fit(X_train, y_train, epochs=400, batch_size=128, validation_split=0.1,
                       callbacks=[early_stop, lr_scheduler], verbose=2)
             st.write("✅ Modèle NHITS (Optimisé) entraîné.")
             return model
+
         elif model_type_lower == 'moirai':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(Dense(300, activation='relu', input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.005)))
             model.add(Dropout(0.25))
@@ -833,13 +769,8 @@ class FTTHPredictor:
             st.write(f"Training Optimized MOIRAI: Learning rate: {optimizer.learning_rate.numpy()}")
             model.fit(X_train, y_train, epochs=400, batch_size=16, callbacks=[early_stop, reduce_lr], verbose=2)
             return model
+
         elif model_type_lower == 'softs':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import LeakyReLU
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(Dense(600, input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.01)))
             model.add(LeakyReLU(alpha=0.2))
@@ -869,41 +800,31 @@ class FTTHPredictor:
             st.write(f"Training Optimized SOFTS: Learning rate: {optimizer.learning_rate.numpy()}")
             model.fit(X_train, y_train, epochs=200, batch_size=6, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
             return model
+
         elif model_type_lower == 'lstm':
-             from tensorflow.keras.models import Sequential
-             from tensorflow.keras.layers import LeakyReLU
-             from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-             from tensorflow.keras.optimizers import AdamW
-             from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-             from tensorflow.keras.regularizers import l2
-             model = Sequential()
-             model.add(Bidirectional(LSTM(512, return_sequences=True, activation='relu', input_shape=(X_train.shape[1], X_train.shape[2]))))
-             model.add(Dropout(0.4))
+            model = Sequential()
+            model.add(Bidirectional(LSTM(512, return_sequences=True, activation='relu', input_shape=(X_train.shape[1], X_train.shape[2]))))
+            model.add(Dropout(0.4))
 
-             model.add(LSTM(256, return_sequences=True, activation='relu'))
-             model.add(Dropout(0.3))
-             model.add(LSTM(100, return_sequences=True, activation='relu'))
-             model.add(Dropout(0.1))
+            model.add(LSTM(256, return_sequences=True, activation='relu'))
+            model.add(Dropout(0.3))
+            model.add(LSTM(100, return_sequences=True, activation='relu'))
+            model.add(Dropout(0.1))
 
-             model.add(LSTM(8, return_sequences=False, activation='relu'))
-             model.add(Dense(1, activation='linear'))
-             model.add(tf.keras.layers.BatchNormalization())
-             optimizer = AdamW(learning_rate=0.0001, weight_decay=1e-5)
-             model.compile(optimizer=optimizer, loss='mean_squared_error')
-             st.write("📊 **Résumé du modèle LSTM Amélioré :**")
-             st.text(model.summary())
-             early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=2)
-             reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=5, min_lr=1e-6, verbose=2)
-             model.fit(X_train.reshape(-1, X_train.shape[1], 1), y_train, epochs=160, batch_size=16, callbacks=[early_stop, reduce_lr], verbose=2)
-             st.write("✅ Modèle LSTM Amélioré entraîné.")
-             return model
+            model.add(LSTM(8, return_sequences=False, activation='relu'))
+            model.add(Dense(1, activation='linear'))
+            model.add(tf.keras.layers.BatchNormalization())
+            optimizer = AdamW(learning_rate=0.0001, weight_decay=1e-5)
+            model.compile(optimizer=optimizer, loss='mean_squared_error')
+            st.write("📊 **Résumé du modèle LSTM Amélioré :**")
+            st.text(model.summary())
+            early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=2)
+            reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=5, min_lr=1e-6, verbose=2)
+            model.fit(X_train.reshape(-1, X_train.shape[1], 1), y_train, epochs=160, batch_size=16, callbacks=[early_stop, reduce_lr], verbose=2)
+            st.write("✅ Modèle LSTM Amélioré entraîné.")
+            return model
 
         elif model_type_lower == 'mlp':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(Dense(612, input_shape=(X_train.shape[1],)))
             model.add(Activation(tf.nn.gelu))
@@ -927,12 +848,8 @@ class FTTHPredictor:
             reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=2)
             model.fit(X_train, y_train, epochs=100, batch_size=64, validation_split=0.1, callbacks=[early_stop, reduce_lr], verbose=2)
             return model
+
         elif model_type_lower == 'gru':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(GRU(512, activation='tanh', return_sequences=True, input_shape=(X_train.shape[1], 1)))
             model.add(Dropout(0.2))
@@ -952,12 +869,8 @@ class FTTHPredictor:
             model.fit(X_train.reshape(-1, X_train.shape[1], 1), y_train, epochs=200, batch_size=8, validation_split=0.2, callbacks=[early_stop], verbose=2)
             st.write("Modèle GRU entraîné.")
             return model
+
         elif model_type_lower == 'tcn':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
             model = Sequential()
             model.add(Conv1D(filters=512, kernel_size=3, padding='causal', activation='swish',
                              input_shape=(X_train.shape[1], 1)))
@@ -984,26 +897,22 @@ class FTTHPredictor:
             model.fit(X_train.reshape(-1, X_train.shape[1], 1), y_train, epochs=500, batch_size=64, validation_split=0.1, callbacks=[early_stop, reduce_lr], verbose=2)
             st.write("✅ Modèle TCN entraîné.")
             return model
+
         elif model_type_lower == 'nbeats':
-            from tensorflow.keras.models import Sequential, Model
-            from tensorflow.keras.layers import Input, Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
-            input_layer = Input(shape=(X_train.shape[1],))
+            input_layer = tf.keras.layers.Input(shape=(X_train.shape[1],))
             x = Dense(512, activation='relu')(input_layer)
             x = Dense(256, activation='relu')(x)
             block_output = Dense(256, activation='relu')(x)
             x = Dense(128, activation='relu')(block_output)
             output = Dense(1, activation='linear')(x)
             model = Model(inputs=input_layer, outputs=output)
-            model.compile(optimizer=AdamW(learning_rate=0.0001), loss='mean_absolute_error', metrics=['mse'])
+            optimizer = AdamW(learning_rate=0.0001)
+            model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
             st.write("📊 **Résumé du modèle nbeats :**")
             early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=2)
             model.fit(X_train, y_train, epochs=200, batch_size=8, callbacks=[early_stop], verbose=2)
             st.write("Modèle N-BEATS entraîné.")
             return model
-
 
     def predict_future(self, model, data_scaled, scaler, start_date, end_date, holidays_list,
                        holiday_weights, outlier_dates, predict_holidays_as_zero,
@@ -1021,6 +930,7 @@ class FTTHPredictor:
             future_dates = pd.to_datetime(future_dates)
         else:
             future_dates = pd.date_range(start=start_date, end=end_date, freq='D')
+
         future_predictions = []
         reduction_factor = 1 - (percentage_reduction / 100) if percentage_reduction is not None else 1
         model_type_lower = model_type.lower()
@@ -1113,6 +1023,11 @@ class FTTHPredictor:
         blended_preds = meta_learner.predict(X_blend)
         return blended_preds
 
+
+# =======================
+# APPLICATION STREAMLIT
+# =======================
+
 class Application:
     def __init__(self):
         self.filepath = ""
@@ -1166,22 +1081,82 @@ class Application:
                 border-radius: 5px;
             }
             </style>""", unsafe_allow_html=True)
+
         if menu == "1-Accueil":
             col1, col2, col3 = st.columns([1, 2, 1])
             with col1:
-                try:
-                    left_banner = Image.open(r"C:\Users\dell\Desktop\BG.png")
+                # BG.png
+                left_banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/BG.png")
+                if left_banner is not None:
                     st.image(left_banner, width=150)
-                except Exception as e:
-                    st.write("Bannière Gauche")
+                else:
+                    st.write("Bannière Gauche introuvable")
             with col2:
                 st.markdown('<div class="banner-container"></div>', unsafe_allow_html=True)
             with col3:
-                try:
-                    right_banner = Image.open(r"C:\Users\dell\Desktop\banWFM.png")
+                # banWFM.png
+                right_banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/banWFM.png")
+                if right_banner is not None:
                     st.image(right_banner, width=150)
-                except Exception as e:
-                    st.write("Bannière Droite")
+                else:
+                    st.write("Bannière Droite introuvable")
+
+            st.markdown("<br><br>", unsafe_allow_html=True)
+
+            # ===== Vidéo de fond (bg-bullet-animation-1920x800.mp4) =====
+            try:
+                video_url = "https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/bg-bullet-animation-1920x800.mp4"
+                video_bytes = requests.get(video_url).content
+                video_b64 = base64.b64encode(video_bytes).decode()
+                st.markdown(f"""
+                    <style>
+                        .video-container {{
+                            position: relative;
+                            width: 100%;
+                            height: 55vh;
+                            overflow: hidden;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }}
+                        .video-container video {{
+                            position: absolute;
+                            top: 60%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            min-width: 100%;
+                            min-height: 100%;
+                            object-fit: cover;
+                            filter: brightness(90%);
+                        }}
+                        .video-text {{
+                            position: absolute;
+                            color: white;
+                            left: 0%;
+                            font-size: 25px;
+                            font-weight: bold;
+                            z-index: 2;
+                            max-width: 100%;
+                            padding: 20px;
+                            background: rgba(0, 0, 100, 0.5);
+                            border-radius: 10px;
+                        }}
+                    </style>
+                    <div class="video-container">
+                        <video autoplay loop muted>
+                            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="video-text">
+                            HIMA - High Integrated Moving Algorithms
+                            <div style="margin-top: 7px; color: red;"> A smart Way to see the futur</div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Erreur lors du chargement de la vidéo de fond : {e}")
+
+            st.markdown("<br><br>", unsafe_allow_html=True)
             st.markdown("<br><br>", unsafe_allow_html=True)
             st.markdown("""
                 <style>
@@ -1198,54 +1173,9 @@ class Application:
                 <div class="title"></div>
                 <div class="title"> </div>
                 """, unsafe_allow_html=True)
-            video_path = r"C:\Users\dell\Desktop\bg-bullet-animation-1920x800.mp4"
-            st.markdown(f"""
-                <style>
-                    .video-container {{
-                        position: relative;
-                        width: 100%;
-                        height: 55vh;
-                        overflow: hidden;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                    }}
-                    .video-container video {{
-                        position: absolute;
-                        top: 60%;
-                        left: 50%;
-                        transform: translate(-50%, -50%);
-                        min-width: 100%;
-                        min-height: 100%;
-                        object-fit: cover;
-                        filter: brightness(90%);
-                    }}
-                    .video-text {{
-                        position: absolute;
-                        color: white;
-                        left: 0%;
-                        font-size: 25px;
-                        font-weight: bold;
-                        z-index: 2;
-                        max-width: 100%;
-                        padding: 20px;
-                        background: rgba(0, 0, 100, 0.5);
-                        border-radius: 10px;
-                    }}
-                </style>
-                <div class="video-container">
-                    <video autoplay loop muted>
-                        <source src="data:video/mp4;base64,{base64.b64encode(open(video_path, 'rb').read()).decode()}" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                    <div class="video-text">
-                        HIMA - High Integrated Moving Algorithms
-                        <div style="margin-top: 7px; color: red;"> A smart Way to see the futur</div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
+
             st.markdown("<br><br>", unsafe_allow_html=True)
-            st.markdown("<br><br>", unsafe_allow_html=True)
+
             st.markdown("""
                 <div class="container">
                     <div class="animated-card">
@@ -1262,20 +1192,23 @@ class Application:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
             st.markdown("<br><br>", unsafe_allow_html=True)
             st.markdown("<br><br>", unsafe_allow_html=True)
             st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">INTELCIA ?</span></h2>""", unsafe_allow_html=True)
             st.markdown('<p style="font-size: 18px; line-height: 1.6;">Depuis plus de 20 ans, nous accompagnons les entreprises dans leur transformation. Nous les aidons à accélérer leur croissance en leur permettant de se concentrer sur leurs enjeux et leur cœur de métier. Grâce à une association unique d’expertises et de talents, nous développons les solutions les mieux adaptées pour répondre aux défis actuels et futurs de nos clients. Ainsi nous avons un impact durable sur leur compétitivité.</p>', unsafe_allow_html=True)
             st.subheader("")
             with st.container():
-                try:
-                    photo1 = Image.open(r"C:\Users\dell\Desktop\mapintelcia.png")
+                # mapintelcia.png
+                photo1 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/mapintelcia.png")
+                if photo1:
                     st.image(photo1, caption="", use_container_width=True)
-                except Exception as e:
+                else:
                     st.write("Photo 1 non disponible.")
-                try:
-                    photo_middle_path = r"C:\Users\dell\Desktop\KB.png"
-                    photo_middle_base64 = get_base64_image(photo_middle_path)
+
+                # KB.png => lien clickable
+                photo_middle_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/KB.png")
+                if photo_middle_base64:
                     st.markdown(f"""
                         <div style="text-align: center;">
                             <a href="https://youtu.be/DWOpWu6htY4" target="_blank">
@@ -1284,8 +1217,9 @@ class Application:
                             <p style="font-size: 16px; font-weight: bold; color: #C23665;">Voir la suite</p>
                         </div>
                     """, unsafe_allow_html=True)
-                except Exception as e:
-                    st.write("Image non disponible.")
+                else:
+                    st.write("Image KB non disponible.")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">WFMR ?</span></h2>""", unsafe_allow_html=True)
@@ -1293,26 +1227,31 @@ class Application:
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🚀 Prenez des décisions stratégiques basées sur des données précises et des analyses avancées.</p>""", unsafe_allow_html=True)
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🤖 "Découvrez **HIMA**, l’application intelligente qui révolutionne la prévision des volumes d’appels grâce aux algorithmes de Machine Learning et Deep Learning, optimisée pour s’adapter aux variations du calendrier et aux tendances historiques avec une précision inégalée."</p>""", unsafe_allow_html=True)
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">✅ "**HIMA** révolutionne la prévision des volumes d’appels en analysant les tendances historiques et les effets calendaires pour offrir des estimations précises et fiables."</p>""", unsafe_allow_html=True)
-                try:
-                    photo_mr_path = r"C:\Users\dell\Desktop\MR.png"
-                    photo_mr_base64 = get_base64_image(photo_mr_path)
+
+                # MR.png => lien clickable
+                photo_mr_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/MR.png")
+                if photo_mr_base64:
                     st.markdown(f"""
-                        <div style="text-align: center; margin-top: 30px;">
+                        <div style="text-align: center;">
                             <a href="https://urlr.me/Kbgv6m" target="_blank">
                                 <img src="data:image/png;base64,{photo_mr_base64}" alt="Voir plus" style="width:14cm; height:14cm; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.2);">
                             </a>
                             <p style="font-size: 16px; font-weight: bold; color: #C23665;">Cliquez ici pour voir plus</p>
                         </div>
                     """, unsafe_allow_html=True)
-                except Exception as e:
+                else:
                     st.write("Image MR non disponible.")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                try:
-                    photo2 = Image.open(r"C:\Users\dell\Desktop\photo2.png")
+
+                # photo2.png
+                photo2 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/photo2.png")
+                if photo2:
                     st.image(photo2, caption="", use_container_width=True)
-                except Exception as e:
+                else:
                     st.write("Photo 2 non disponible.")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">HIMA ?</span></h2>""", unsafe_allow_html=True)
@@ -1344,21 +1283,28 @@ class Application:
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🤖 Tout a été pensé pour leur permettre d’apprendre, de grandir et de s’épanouir au sein d’un leader mondial qui fait de l’agilité son fer de lance.</p>""", unsafe_allow_html=True)
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">Nous avons 20 ans, et pour longtemps encore.</p>""", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                video_path = r"C:\Users\dell\Desktop\Humain_Robot.mp4"
-                try:
-                    with open(video_path, 'rb') as video_file:
-                        video_bytes = video_file.read()
-                        video_b64 = base64.b64encode(video_bytes).decode()
-                    video_html = f""" <video width="700" controls autoplay loop muted style="display: block; margin: 0 auto;"> <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                        Votre navigateur ne supporte pas la balise vidéo. </video> """
-                    st.markdown(video_html, unsafe_allow_html=True)
 
+                # Humain_Robot.mp4
+                try:
+                    video_url = "https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/Humain_Robot.mp4"
+                    video_bytes = requests.get(video_url).content
+                    video_b64 = base64.b64encode(video_bytes).decode()
+                    video_html = f""" 
+                    <video width="700" controls autoplay loop muted style="display: block; margin: 0 auto;">
+                        <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                        Votre navigateur ne supporte pas la balise vidéo.
+                    </video> 
+                    """
+                    st.markdown(video_html, unsafe_allow_html=True)
                 except Exception as e:
-                    st.error(f"Erreur lors du chargement de la vidéo  : {e}")
+                    st.error(f"Erreur lors du chargement de la vidéo : {e}")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                linkedin_base64 = get_base64_image(r"C:\Users\dell\Desktop\linkedin.png")
-                intelcia_base64 = get_base64_image(r"C:\Users\dell\Desktop\Instagram_icon.png")
+
+                # Footer
+                linkedin_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/linkedin.png")
+                intelcia_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/Instagram_icon.png")
                 st.markdown(f"""
                 <style>
                 .footer {{
@@ -1426,6 +1372,7 @@ class Application:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
         elif menu == "2-Chargez Historique":
             st.sidebar.success("""
             ## 📖 info fichier d'upload'
@@ -1444,9 +1391,9 @@ class Application:
                     predictor = FTTHPredictor(seq_length=20, prediction_type=st.session_state.prediction_type)
                     data, data_scaled, scaler, weekday_weights = predictor.load_and_preprocess_data(
                         temp_file,
-                        holidays_list=st.session_state.holidays,
-                        holiday_weights=st.session_state.holiday_weights,
-                        outlier_dates=st.session_state.outliers,
+                        holidays_list=st.session_state.holidays if 'holidays' in st.session_state else [],
+                        holiday_weights=st.session_state.holiday_weights if 'holiday_weights' in st.session_state else [],
+                        outlier_dates=st.session_state.outliers if 'outliers' in st.session_state else [],
                         predict_holidays_as_zero=False,
                         predict_weekends_as_zero=False,
                         predict_saturday_as_zero=False,
@@ -1455,7 +1402,6 @@ class Application:
                     )
                     if data is not None:
                         st.subheader("")
-                        import seaborn as sns
                         import seaborn as sns
                         import matplotlib.pyplot as plt
 
@@ -1496,8 +1442,8 @@ class Application:
                         os.remove(temp_file)
             else:
                 st.info("Veuillez charger un fichier CSV pour continuer.")
-        elif menu == "3-Paramétrages & Prév":
 
+        elif menu == "3-Paramétrages & Prév":
             st.header("🔮 Prévisions")
             st.sidebar.markdown("""
                 ## ⚙️ Paramètres de Prévision
@@ -1509,6 +1455,11 @@ class Application:
             """, unsafe_allow_html=True)
             st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
             st.markdown("### Gestion des Jours Fériés")
+            if 'holidays' not in st.session_state:
+                st.session_state.holidays = []
+            if 'holiday_weights' not in st.session_state:
+                st.session_state.holiday_weights = []
+
             col1, col2 = st.columns(2)
             with col1:
                 holiday_date = st.date_input("Ajouter un jour férié :", key="holiday_date")
@@ -1519,6 +1470,7 @@ class Application:
                         st.session_state.holidays.append(formatted_holiday)
                         st.session_state.holiday_weights.append(100)
                         st.success(f"Jour férié ajouté : {formatted_holiday}")
+
             if st.session_state.holidays:
                 st.subheader("Liste des Jours Fériés avec Poids")
                 for idx, holiday in enumerate(st.session_state.holidays):
@@ -1533,9 +1485,14 @@ class Application:
                             st.session_state.holidays.pop(idx)
                             st.session_state.holiday_weights.pop(idx)
                             st.success(f"Jour férié supprimé : {holiday}")
+
             st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
             st.markdown("### Gestion des Valeurs Hors Normes")
+
+            if 'outliers' not in st.session_state:
+                st.session_state.outliers = []
+
             col1, col2 = st.columns(2)
             with col1:
                 outlier_date = st.date_input("Ajouter une valeur aberrante :", key="outlier_date")
@@ -1545,6 +1502,7 @@ class Application:
                     if formatted_outlier not in st.session_state.outliers:
                         st.session_state.outliers.append(formatted_outlier)
                         st.success(f"Valeur aberrante ajoutée : {formatted_outlier}")
+
             if st.session_state.outliers:
                 st.subheader("Liste des Valeurs Aberrantes")
                 for idx, outlier in enumerate(st.session_state.outliers):
@@ -1555,6 +1513,7 @@ class Application:
                         if st.button(f"Remove {outlier}", key=f"remove_outlier_{outlier}"):
                             st.session_state.outliers.pop(idx)
                             st.success(f"Valeur aberrante supprimée : {outlier}")
+
             st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
             st.markdown("### Granularité")
@@ -1576,6 +1535,15 @@ class Application:
             st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
             st.markdown("### Gestion JF & Week-end")
+            if 'predict_holidays_as_zero' not in st.session_state:
+                st.session_state.predict_holidays_as_zero = False
+            if 'predict_saturday_as_zero' not in st.session_state:
+                st.session_state.predict_saturday_as_zero = False
+            if 'predict_sunday_as_zero' not in st.session_state:
+                st.session_state.predict_sunday_as_zero = False
+            if 'predict_weekends_as_zero' not in st.session_state:
+                st.session_state.predict_weekends_as_zero = False
+
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 predict_holidays_as_zero = st.checkbox("Prédire JF comme 0", value=False, key="predict_holidays_as_zero")
@@ -1587,23 +1555,28 @@ class Application:
                 predict_weekends_as_zero = st.checkbox("Prédire week-ends comme 0", value=False, key="predict_weekends_as_zero")
             st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('<div style="border-top: 6px solid #004080; margin-top: 15px; margin-bottom: 25px;"></div>', unsafe_allow_html=True)
+
             if "filepath" not in st.session_state or st.session_state.filepath is None:
                 st.error("Veuillez d'abord charger un fichier dans la section 'Chargement des données'.")
             else:
                 start_date = st.date_input("Date de Début Prévision :", key="start_date")
                 end_date = st.date_input("Date de Fin Prévision :", key="end_date")
+
                 if st.button("🚀 Lancer la prévision"):
                     try:
                         if start_date >= end_date:
                             raise ValueError("La date de début doit être avant la date de fin.")
+
                         seq_length = 5
                         all_holidays = [pd.Timestamp(holiday) for holiday in st.session_state.holidays]
                         holiday_weights = st.session_state.holiday_weights
                         outlier_dates = [pd.Timestamp(outlier) for outlier in st.session_state.outliers]
                         predictor = FTTHPredictor(seq_length, st.session_state.prediction_type)
+
                         temp_file = "temp_uploaded_file.csv"
                         with open(temp_file, "wb") as f:
                             f.write(st.session_state.filepath.getbuffer())
+
                         data, data_scaled, scaler, weekday_weights = predictor.load_and_preprocess_data(
                             temp_file,
                             holidays_list=all_holidays,
@@ -1616,26 +1589,33 @@ class Application:
                             working_hours=(int(st.session_state.working_hours_start.split(':')[0]),
                                            int(st.session_state.working_hours_end.split(':')[0]))
                         )
+
                         if data is None:
                             raise ValueError("Prétraitement des données échoué.")
                         st.subheader("📊 Avancement...")
+
                         if len(data) <= seq_length:
                             seq_length = max(1, len(data) - 1)
                         train_data, test_data = predictor.split_train_test(data_scaled, train_ratio=0.8)
                         X_train_seq, y_train_seq = predictor.create_sequences(train_data)
                         X_test_seq, y_test_seq = predictor.create_sequences(test_data)
+
                         if len(X_train_seq) == 0 or len(y_train_seq) == 0:
                             raise ValueError("Pas assez de séquences créées. Veuillez fournir plus de points de données ou ajuster la longueur de la séquence.")
+
                         models = {}
                         progress_bar = st.progress(0)
                         progress_text = st.empty()
+
+                        # Sélection de quelques modèles en exemple
                         if st.session_state.prediction_type == 'tranche':
-                            model_types = ['svr']
+                            model_types = ['svr']  # par exemple
                         else:
-                            model_types =  ['huber', 'elasticnet']###algoalgo
+                            model_types = ['huber', 'elasticnet']  # ajustez selon vos besoins
+
                         total_models = len(model_types)
                         completed = 0
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
+
                         with ThreadPoolExecutor() as executor:
                             future_models = {executor.submit(predictor.train_model, X_train_seq, y_train_seq, m_type): m_type for m_type in model_types}
                             for future in as_completed(future_models):
@@ -1651,10 +1631,12 @@ class Application:
                                 progress_text.write(f"Progression : {progress}%")
                             progress_text.write("✅ Entraînement terminé !")
                             st.success("Tous les modèles ont été entraînés avec succès ! 🎉")
+
                         best_model_name = None
                         best_r2 = float('-inf')
                         results = {}
                         model_preds = []
+
                         with st.spinner("📊 Évaluation des modèles..."):
                             for m_name, model in models.items():
                                 if model is None:
@@ -1663,24 +1645,28 @@ class Application:
                                     if m_name.lower() in ["arrima", "sarima"]:
                                         n_steps = X_test_seq.shape[0]
                                         y_pred = model.forecast(steps=n_steps)
-                                    elif m_name.lower() in ["catboost",  "svr", "adaboost", "huber", "ridge",  "ensemble", "elasticnet", 'lightgbm']:
+                                    elif m_name.lower() in ["catboost", "svr", "adaboost", "huber", "ridge", "ensemble", "elasticnet", 'lightgbm']:
                                         X_test_reshaped = X_test_seq.reshape((X_test_seq.shape[0], -1))
                                         y_pred = model.predict(X_test_reshaped)
                                     else:
                                         y_pred = model.predict(X_test_seq)
+
                                     y_test_inv = scaler.inverse_transform(y_test_seq.reshape(-1, 1))
                                     y_pred_inv = scaler.inverse_transform(np.array(y_pred).reshape(-1, 1))
                                     y_pred_inv = np.clip(y_pred_inv, 0, None)
+
                                     r2 = r2_score(y_test_inv, y_pred_inv)
                                     mae = mean_absolute_error(y_test_inv, y_pred_inv)
                                     results[m_name] = {"R2": r2, "MAE": mae}
                                     model_preds.append(y_pred_inv.flatten())
+
                                     if r2 > best_r2:
                                         best_r2 = r2
                                         best_model_name = m_name
                                 except Exception as e:
                                     logging.error(f"Erreur lors de la prédiction avec {m_name} : {e}")
                                     st.error(f"Erreur lors de la prédiction avec {m_name} : {e}")
+
                         if best_model_name:
                             future_dates, future_predictions = predictor.predict_future(
                                 models[best_model_name], data_scaled, scaler, start_date, end_date, all_holidays,
@@ -1698,7 +1684,7 @@ class Application:
                             df_predictions = pd.DataFrame({"Date": future_dates, "Forecast": future_predictions})
                             df_predictions["Day"] = df_predictions["Date"].dt.date
 
-
+                            # Correction post-prediction
                             holiday_dates = [pd.to_datetime(h).date() for h in st.session_state.holidays]
                             for idx, d in enumerate(future_dates):
                                 if st.session_state.predict_saturday_as_zero and d.weekday() == 5:
@@ -1709,12 +1695,14 @@ class Application:
                                     future_predictions[idx] = 0
                                 if st.session_state.predict_holidays_as_zero and d.date() in holiday_dates:
                                     future_predictions[idx] = 0
+
                             df_predictions = pd.DataFrame({"Date": future_dates, "Forecast": future_predictions})
                             df_history = pd.DataFrame({
                                 "Date": list(data["date"]) + list(future_dates),
                                 "Volume": list(data["volume"]) + list(future_predictions),
                                 "Type": ["Historique"] * len(data) + ["Prévision"] * len(future_dates)
                             })
+
                             fig_forecast = go.Figure()
                             fig_forecast.add_trace(go.Scatter(
                                 x=df_predictions["Date"], y=df_predictions["Forecast"],
@@ -1730,12 +1718,12 @@ class Application:
                                 font=dict(color="white")
                             )
                             st.plotly_chart(fig_forecast, use_container_width=True)
+
                             df_tranche = df_predictions.copy()
                             df_tranche["Hour"] = df_tranche["Date"].dt.hour
+
                             output = io.BytesIO()
                             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                                import matplotlib.pyplot as plt
-
                                 historical_start = data["date"].min().date()
                                 historical_end = data["date"].max().date()
                                 df_dates = pd.DataFrame({
@@ -1744,6 +1732,8 @@ class Application:
                                     "Date fin": [str(historical_end), str(end_date)]
                                 })
                                 df_dates.to_excel(writer, sheet_name="Dates", index=False)
+
+                                # Graph "Historique vs Prévision"
                                 fig, ax = plt.subplots(figsize=(10, 5))
                                 df_history[df_history["Type"] == "Historique"].plot(
                                     x="Date", y="Volume", ax=ax, color="blue", label="Historique"
@@ -1753,20 +1743,25 @@ class Application:
                                 )
                                 ax.set_title("Historique vs Prévision")
                                 ax.legend()
+
                                 graph_bytes = io.BytesIO()
                                 plt.savefig(graph_bytes, format="png", bbox_inches="tight")
                                 plt.close(fig)
                                 graph_bytes.seek(0)
                                 img_data = graph_bytes.read()
+
                                 workbook = writer.book
                                 worksheet_graph = workbook.add_worksheet("Graph")
                                 worksheet_graph.insert_image("A1", "graph.png", {'image_data': io.BytesIO(img_data)})
+
                                 df_history.to_excel(writer, sheet_name="Historique & Graph", index=False)
                                 worksheet_history = writer.sheets["Historique & Graph"]
                                 worksheet_history.insert_image("G2", "graph.png", {'image_data': io.BytesIO(img_data)})
+
                                 df_daily = data.groupby(data["date"].dt.date)["volume"].sum().reset_index()
                                 df_daily.columns = ["Date", "Volume"]
                                 df_daily.to_excel(writer, sheet_name="Volume Jour", index=False)
+
                             output.seek(0)
                             excel_data = output.getvalue()
                             timestamp = datetime.now().strftime("%H_%M_%S_%d_%m_%Y")
@@ -1776,16 +1771,19 @@ class Application:
                                 file_name=f"HIMA_prediction_{timestamp}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
+
                             st.markdown("---")
                             col1, col2, col3 = st.columns([1, 2, 1])
                             with col1:
-                                try:
-                                    banner = Image.open(r"C:\Users\dell\Desktop\CE.png")
+                                # CE.png
+                                banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/CE.png")
+                                if banner:
                                     new_size = (banner.width // 2, banner.height // 2)
                                     banner_resized = banner.resize(new_size, Image.Resampling.LANCZOS)
                                     st.image(banner_resized, caption="© 2025 HIMA_By_WFM", width=new_size[0])
-                                except Exception as e:
-                                    logging.error(f"Erreur lors du chargement du bandeau: {e}")
+                                else:
+                                    logging.error(f"Erreur lors du chargement du bandeau CE.png")
+
                     except Exception as e:
                         st.error(f"Erreur lors de la prévision : {e}")
                     finally:
@@ -1793,5 +1791,29 @@ class Application:
                             os.remove(temp_file)
 
 if __name__ == "__main__":
+    # Initialisation de quelques variables de session au lancement
+    if 'holidays' not in st.session_state:
+        st.session_state.holidays = []
+    if 'holiday_weights' not in st.session_state:
+        st.session_state.holiday_weights = []
+    if 'outliers' not in st.session_state:
+        st.session_state.outliers = []
+    if 'predictions_csv' not in st.session_state:
+        st.session_state.predictions_csv = None
+    if 'prediction_type' not in st.session_state:
+        st.session_state.prediction_type = "Jour"
+    if 'working_hours_start' not in st.session_state:
+        st.session_state.working_hours_start = "08:00"
+    if 'working_hours_end' not in st.session_state:
+        st.session_state.working_hours_end = "18:00"
+    if 'predict_holidays_as_zero' not in st.session_state:
+        st.session_state.predict_holidays_as_zero = False
+    if 'predict_saturday_as_zero' not in st.session_state:
+        st.session_state.predict_saturday_as_zero = False
+    if 'predict_sunday_as_zero' not in st.session_state:
+        st.session_state.predict_sunday_as_zero = False
+    if 'predict_weekends_as_zero' not in st.session_state:
+        st.session_state.predict_weekends_as_zero = False
+
     app = Application()
     app.run()
