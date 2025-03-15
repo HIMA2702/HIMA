@@ -1095,7 +1095,7 @@ class Application:
                 st.markdown('<div class="banner-container"></div>', unsafe_allow_html=True)
             with col3:
                 # banWFM.png
-                right_banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/banWFM.png")
+                right_banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/banWFM.png")
                 if right_banner is not None:
                     st.image(right_banner, width=150)
                 else:
@@ -1105,7 +1105,7 @@ class Application:
 
             # ===== Vidéo de fond (bg-bullet-animation-1920x800.mp4) =====
             try:
-                video_url = "https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/bg-bullet-animation-1920x800.mp4"
+                video_url = "https://raw.githubusercontent.com/HIMA2702/HIMA/main/bg-bullet-animation-1920x800.mp4"
                 video_bytes = requests.get(video_url).content
                 video_b64 = base64.b64encode(video_bytes).decode()
                 st.markdown(f"""
@@ -1200,14 +1200,14 @@ class Application:
             st.subheader("")
             with st.container():
                 # mapintelcia.png
-                photo1 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/mapintelcia.png")
+                photo1 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/mapintelcia.png")
                 if photo1:
                     st.image(photo1, caption="", use_container_width=True)
                 else:
                     st.write("Photo 1 non disponible.")
 
                 # KB.png => lien clickable
-                photo_middle_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/KB.png")
+                photo_middle_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/KB.png")
                 if photo_middle_base64:
                     st.markdown(f"""
                         <div style="text-align: center;">
@@ -1229,7 +1229,7 @@ class Application:
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">✅ "**HIMA** révolutionne la prévision des volumes d’appels en analysant les tendances historiques et les effets calendaires pour offrir des estimations précises et fiables."</p>""", unsafe_allow_html=True)
 
                 # MR.png => lien clickable
-                photo_mr_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/MR.png")
+                photo_mr_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/MR.png")
                 if photo_mr_base64:
                     st.markdown(f"""
                         <div style="text-align: center;">
@@ -1246,7 +1246,7 @@ class Application:
                 st.markdown("<br><br>", unsafe_allow_html=True)
 
                 # photo2.png
-                photo2 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/photo2.png")
+                photo2 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/photo2.png")
                 if photo2:
                     st.image(photo2, caption="", use_container_width=True)
                 else:
@@ -1286,7 +1286,7 @@ class Application:
 
                 # Humain_Robot.mp4
                 try:
-                    video_url = "https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/Humain_Robot.mp4"
+                    video_url = "https://raw.githubusercontent.com/HIMA2702/HIMA/main/Humain_Robot.mp4"
                     video_bytes = requests.get(video_url).content
                     video_b64 = base64.b64encode(video_bytes).decode()
                     video_html = f""" 
@@ -1303,8 +1303,8 @@ class Application:
                 st.markdown("<br><br>", unsafe_allow_html=True)
 
                 # Footer
-                linkedin_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/linkedin.png")
-                intelcia_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/Instagram_icon.png")
+                linkedin_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/linkedin.png")
+                intelcia_base64 = get_base64_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/Instagram_icon.png")
                 st.markdown(f"""
                 <style>
                 .footer {{
@@ -1776,7 +1776,7 @@ class Application:
                             col1, col2, col3 = st.columns([1, 2, 1])
                             with col1:
                                 # CE.png
-                                banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/CE.png")
+                                banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/CE.png")
                                 if banner:
                                     new_size = (banner.width // 2, banner.height // 2)
                                     banner_resized = banner.resize(new_size, Image.Resampling.LANCZOS)
