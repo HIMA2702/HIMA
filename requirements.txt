@@ -16,7 +16,7 @@ plotly==5.14.1
 seaborn==0.12.2
 matplotlib==3.7.1
 pandas==2.1.1
-numpy==1.23.5
+numpy
 scikit-learn==1.2.2
 Pillow==9.5.0
 xlsxwriter==3.0.9
