@@ -1404,6 +1404,7 @@ class Application:
                         st.subheader("")
                         import seaborn as sns
                         import matplotlib.pyplot as plt
+                        
 
                         data['day_name'] = data['date'].dt.day_name()
                         ordered_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -1685,6 +1686,9 @@ class Application:
                             df_predictions["Day"] = df_predictions["Date"].dt.date
 
                             # Correction post-prediction
+                            import seaborn as sns
+                            import seaborn as sns
+                            import matplotlib.pyplot as pl
                             holiday_dates = [pd.to_datetime(h).date() for h in st.session_state.holidays]
                             for idx, d in enumerate(future_dates):
                                 if st.session_state.predict_saturday_as_zero and d.weekday() == 5:
