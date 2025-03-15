@@ -1,16 +1,12 @@
-# Use CPU-only TensorFlow
-tensorflow-cpu==2.12.0
+# 1) TensorFlow CPU for Python 3.12
+#    As of March 2025, 2.18.1 is available on PyPI for 3.12.
+tensorflow-cpu==2.18.1
 
-# Use CPU-friendly PyTorch
-# (You can also try torch==2.0.0 if this fails, but
-#  the +cpu wheels are often more reliable in non-GPU envs.)
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.0.0+cpu
+# 2) PyTorch for Python 3.12 (CPU-only build is auto-detected if no GPU is found)
+torch==2.1.0
 
-# CatBoost can cause numpy dtype mismatch if pinned incorrectly;
-# 1.2 is usually okay, but if you still get errors, try removing the pin.
+# 3) Other libraries
 catboost==1.2
-
 lightgbm==3.3.5
 optuna==3.1.1
 statsmodels==0.13.5
@@ -19,7 +15,7 @@ chardet==5.1.0
 plotly==5.14.1
 seaborn==0.12.2
 matplotlib==3.7.1
-pandas==1.5.3
+pandas==2.1.1
 numpy==1.23.5
 scikit-learn==1.2.2
 Pillow==9.5.0
