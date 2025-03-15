@@ -1,7 +1,16 @@
-streamlit==1.24.1
-tensorflow==2.12.0
-torch==2.0.0
+# Use CPU-only TensorFlow
+tensorflow-cpu==2.12.0
+
+# Use CPU-friendly PyTorch
+# (You can also try torch==2.0.0 if this fails, but
+#  the +cpu wheels are often more reliable in non-GPU envs.)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.0.0+cpu
+
+# CatBoost can cause numpy dtype mismatch if pinned incorrectly;
+# 1.2 is usually okay, but if you still get errors, try removing the pin.
 catboost==1.2
+
 lightgbm==3.3.5
 optuna==3.1.1
 statsmodels==0.13.5
@@ -17,3 +26,6 @@ Pillow==9.5.0
 xlsxwriter==3.0.9
 darts==0.23.1
 neuralforecast==1.4.0
+
+# Finally, Streamlit
+streamlit==1.24.1
