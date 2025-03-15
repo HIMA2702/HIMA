@@ -1086,7 +1086,7 @@ class Application:
             col1, col2, col3 = st.columns([1, 2, 1])
             with col1:
                 # BG.png
-                left_banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/graphs/BG.png")
+                left_banner = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/BG.png")
                 if left_banner is not None:
                     st.image(left_banner, width=150)
                 else:
