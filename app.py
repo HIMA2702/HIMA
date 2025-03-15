@@ -1364,7 +1364,7 @@ class Application:
                         </div>
                     </div>
                     <div class="footer-end">
-                        © 2015 Intelcia group | Talent Academy<br>
+                        © 2025_This Website was created and developped by Hicham TALA & Nasreddine QUHILA <br>
                         <div class="social-links">
                             <a href="https://www.intelcia.com/it" target="_blank"><img src="data:image/png;base64,{intelcia_base64}" alt="Intelcia" style="height: 20px;"></a>
                             <a href="https://www.linkedin.com/company/intelcia/posts/?feedView=all" target="_blank"><img src="data:image/png;base64,{linkedin_base64}" alt="LinkedIn" style="height: 20px;"></a>
