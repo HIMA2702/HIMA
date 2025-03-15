@@ -1198,7 +1198,7 @@ class Application:
                 <div class="title"></div>
                 <div class="title"> </div>
                 """, unsafe_allow_html=True)
-            video_path = r"C:\Users\dell\Desktop\bg-bullet-animation-1920x800.mp4"
+            video_path = os.path.join(os.path.dirname(__file__), "bg-bullet-animation-1920x800.mp4")
             st.markdown(f"""
                 <style>
                     .video-container {{
