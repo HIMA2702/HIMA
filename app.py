@@ -1,11 +1,29 @@
-import streamlit as st, os, io, webbrowser, base64, time, warnings, logging, random
+import streamlit as st
+import os
+import io
+import webbrowser
+import base64
+import time
+import warnings
+import logging
+import random
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, LSTM, GRU, Conv1D, Flatten, Bidirectional, LeakyReLU, ELU, GlobalAveragePooling1D, MultiHeadAttention, LayerNormalization, Activation
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam, AdamW, RMSprop
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback
-import numpy as np, pandas as pd, matplotlib.pyplot as plt, plotly.express as px, plotly.graph_objects as go
-import statsmodels.api as sm, chardet, holidays, torch, tensorflow as tf, lightgbm as lgb, catboost as cb
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import statsmodels.api as sm
+import chardet
+import holidays
+import torch
+import tensorflow as tf
+import lightgbm as lgb
+import catboost as cb
 import optuna
 from darts.models import NHiTSModel
 from tensorflow.keras.layers import LeakyReLU
@@ -1004,7 +1022,6 @@ class FTTHPredictor:
             st.write("Modèle N-BEATS entraîné.")
             return model
 
-
     def predict_future(self, model, data_scaled, scaler, start_date, end_date, holidays_list,
                        holiday_weights, outlier_dates, predict_holidays_as_zero,
                        predict_weekends_as_zero, predict_saturday_as_zero, predict_sunday_as_zero,
@@ -1170,7 +1187,9 @@ class Application:
             col1, col2, col3 = st.columns([1, 2, 1])
             with col1:
                 try:
-                    left_banner = Image.open(r"C:\Users\dell\Desktop\BG.png")
+                    # Replaced local path with GitHub raw URL
+                    left_banner_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/BG.png"
+                    left_banner = Image.open(io.BytesIO(base64.b64decode(base64.b64encode(requests.get(left_banner_url).content))))
                     st.image(left_banner, width=150)
                 except Exception as e:
                     st.write("Bannière Gauche")
@@ -1178,7 +1197,9 @@ class Application:
                 st.markdown('<div class="banner-container"></div>', unsafe_allow_html=True)
             with col3:
                 try:
-                    right_banner = Image.open(r"C:\Users\dell\Desktop\banWFM.png")
+                    # Replaced local path with GitHub raw URL
+                    right_banner_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/banWFM.png"
+                    right_banner = Image.open(io.BytesIO(base64.b64decode(base64.b64encode(requests.get(right_banner_url).content))))
                     st.image(right_banner, width=150)
                 except Exception as e:
                     st.write("Bannière Droite")
@@ -1198,52 +1219,60 @@ class Application:
                 <div class="title"></div>
                 <div class="title"> </div>
                 """, unsafe_allow_html=True)
-            video_path = os.path.join(os.path.dirname(__file__), "bg-bullet-animation-1920x800.mp4")
-            st.markdown(f"""
-                <style>
-                    .video-container {{
-                        position: relative;
-                        width: 100%;
-                        height: 55vh;
-                        overflow: hidden;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                    }}
-                    .video-container video {{
-                        position: absolute;
-                        top: 60%;
-                        left: 50%;
-                        transform: translate(-50%, -50%);
-                        min-width: 100%;
-                        min-height: 100%;
-                        object-fit: cover;
-                        filter: brightness(90%);
-                    }}
-                    .video-text {{
-                        position: absolute;
-                        color: white;
-                        left: 0%;
-                        font-size: 25px;
-                        font-weight: bold;
-                        z-index: 2;
-                        max-width: 100%;
-                        padding: 20px;
-                        background: rgba(0, 0, 100, 0.5);
-                        border-radius: 10px;
-                    }}
-                </style>
-                <div class="video-container">
-                    <video autoplay loop muted>
-                        <source src="data:video/mp4;base64,{base64.b64encode(open(video_path, 'rb').read()).decode()}" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                    <div class="video-text">
-                        HIMA - High Integrated Moving Algorithms
-                        <div style="margin-top: 7px; color: red;"> A smart Way to see the futur</div>
+            # Replaced local path with GitHub raw URL
+            video_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/bg-bullet-animation-1920x800.mp4"
+            try:
+                import requests
+                video_content = requests.get(video_url).content
+                video_b64 = base64.b64encode(video_content).decode()
+                st.markdown(f"""
+                    <style>
+                        .video-container {{
+                            position: relative;
+                            width: 100%;
+                            height: 55vh;
+                            overflow: hidden;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }}
+                        .video-container video {{
+                            position: absolute;
+                            top: 60%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            min-width: 100%;
+                            min-height: 100%;
+                            object-fit: cover;
+                            filter: brightness(90%);
+                        }}
+                        .video-text {{
+                            position: absolute;
+                            color: white;
+                            left: 0%;
+                            font-size: 25px;
+                            font-weight: bold;
+                            z-index: 2;
+                            max-width: 100%;
+                            padding: 20px;
+                            background: rgba(0, 0, 100, 0.5);
+                            border-radius: 10px;
+                        }}
+                    </style>
+                    <div class="video-container">
+                        <video autoplay loop muted>
+                            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="video-text">
+                            HIMA - High Integrated Moving Algorithms
+                            <div style="margin-top: 7px; color: red;"> A smart Way to see the futur</div>
+                        </div>
                     </div>
-                </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Erreur lors du chargement de la vidéo : {e}")
+
             st.markdown("<br><br>", unsafe_allow_html=True)
             st.markdown("<br><br>", unsafe_allow_html=True)
             st.markdown("""
@@ -1269,13 +1298,18 @@ class Application:
             st.subheader("")
             with st.container():
                 try:
-                    photo1 = Image.open(r"C:\Users\dell\Desktop\mapintelcia.png")
-                    st.image(photo1, caption="", use_container_width=True)
+                    # Replaced local path with GitHub raw URL
+                    mapintelcia_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/mapintelcia.png"
+                    mapintelcia_img = Image.open(io.BytesIO(requests.get(mapintelcia_url).content))
+                    st.image(mapintelcia_img, caption="", use_container_width=True)
                 except Exception as e:
                     st.write("Photo 1 non disponible.")
+
                 try:
-                    photo_middle_path = r"C:\Users\dell\Desktop\KB.png"
-                    photo_middle_base64 = get_base64_image(photo_middle_path)
+                    # Replaced local path with GitHub raw URL
+                    photo_middle_path = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/KB.png"
+                    photo_middle_content = requests.get(photo_middle_path).content
+                    photo_middle_base64 = base64.b64encode(photo_middle_content).decode()
                     st.markdown(f"""
                         <div style="text-align: center;">
                             <a href="https://youtu.be/DWOpWu6htY4" target="_blank">
@@ -1286,6 +1320,7 @@ class Application:
                     """, unsafe_allow_html=True)
                 except Exception as e:
                     st.write("Image non disponible.")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">WFMR ?</span></h2>""", unsafe_allow_html=True)
@@ -1293,9 +1328,12 @@ class Application:
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🚀 Prenez des décisions stratégiques basées sur des données précises et des analyses avancées.</p>""", unsafe_allow_html=True)
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🤖 "Découvrez **HIMA**, l’application intelligente qui révolutionne la prévision des volumes d’appels grâce aux algorithmes de Machine Learning et Deep Learning, optimisée pour s’adapter aux variations du calendrier et aux tendances historiques avec une précision inégalée."</p>""", unsafe_allow_html=True)
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">✅ "**HIMA** révolutionne la prévision des volumes d’appels en analysant les tendances historiques et les effets calendaires pour offrir des estimations précises et fiables."</p>""", unsafe_allow_html=True)
+
                 try:
-                    photo_mr_path = r"C:\Users\dell\Desktop\MR.png"
-                    photo_mr_base64 = get_base64_image(photo_mr_path)
+                    # Replaced local path with GitHub raw URL
+                    photo_mr_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/MR.png"
+                    photo_mr_content = requests.get(photo_mr_url).content
+                    photo_mr_base64 = base64.b64encode(photo_mr_content).decode()
                     st.markdown(f"""
                         <div style="text-align: center; margin-top: 30px;">
                             <a href="https://urlr.me/Kbgv6m" target="_blank">
@@ -1306,13 +1344,17 @@ class Application:
                     """, unsafe_allow_html=True)
                 except Exception as e:
                     st.write("Image MR non disponible.")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 try:
-                    photo2 = Image.open(r"C:\Users\dell\Desktop\photo2.png")
-                    st.image(photo2, caption="", use_container_width=True)
+                    # Replaced local path with GitHub raw URL
+                    photo2_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/photo2.png"
+                    photo2_img = Image.open(io.BytesIO(requests.get(photo2_url).content))
+                    st.image(photo2_img, caption="", use_container_width=True)
                 except Exception as e:
                     st.write("Photo 2 non disponible.")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">HIMA ?</span></h2>""", unsafe_allow_html=True)
@@ -1344,88 +1386,101 @@ class Application:
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🤖 Tout a été pensé pour leur permettre d’apprendre, de grandir et de s’épanouir au sein d’un leader mondial qui fait de l’agilité son fer de lance.</p>""", unsafe_allow_html=True)
                 st.markdown("""<p style="font-size: 18px; line-height: 1.6;">Nous avons 20 ans, et pour longtemps encore.</p>""", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                video_path = r"C:\Users\dell\Desktop\Humain_Robot.mp4"
+                # Replaced local path with GitHub raw URL
+                video_url_2 = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/Humain_Robot.mp4"
                 try:
-                    with open(video_path, 'rb') as video_file:
-                        video_bytes = video_file.read()
-                        video_b64 = base64.b64encode(video_bytes).decode()
-                    video_html = f""" <video width="700" controls autoplay loop muted style="display: block; margin: 0 auto;"> <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                        Votre navigateur ne supporte pas la balise vidéo. </video> """
-                    st.markdown(video_html, unsafe_allow_html=True)
-
+                    video_content_2 = requests.get(video_url_2).content
+                    video_b64_2 = base64.b64encode(video_content_2).decode()
+                    video_html_2 = f""" 
+                        <video width="700" controls autoplay loop muted style="display: block; margin: 0 auto;"> 
+                            <source src="data:video/mp4;base64,{video_b64_2}" type="video/mp4">
+                            Votre navigateur ne supporte pas la balise vidéo. 
+                        </video> 
+                    """
+                    st.markdown(video_html_2, unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"Erreur lors du chargement de la vidéo  : {e}")
+
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                linkedin_base64 = get_base64_image(r"C:\Users\dell\Desktop\linkedin.png")
-                intelcia_base64 = get_base64_image(r"C:\Users\dell\Desktop\Instagram_icon.png")
-                st.markdown(f"""
-                <style>
-                .footer {{
-                    background: linear-gradient(to right, #dd6aa4, #87559e);
-                    padding: 40px;
-                    color: white;
-                    text-align: left;
-                    width: 100%;
-                    position: relative;
-                }}
-                .footer-container {{
-                    display: flex;
-                    justify-content: space-between;
-                    max-width: 1600px;
-                    margin: auto;
-                }}
-                .footer-section {{
-                    flex: 1;
-                    margin: 0 30px;
-                }}
-                h3 {{
-                    margin-bottom: 10px;
-                    font-size: 16px;
-                }}
-                .footer a {{
-                    color: white;
-                    text-decoration: none;
-                    font-size: 14px;
-                }}
-                a:hover {{
-                    text-decoration: underline;
-                }}
-                .footer .footer-end {{
-                    text-align: center;
-                    margin-top: 20px;
-                    font-size: 12px;
-                }}
-                .footer .social-links {{
-                    margin-top: 10px;
-                }}
-                .footer .social-links a {{
-                    margin-right: 15px;
-                }}
-                </style>
-                <div class="footer">
-                    <div class="footer-container">
-                        <div class="footer-section">
-                            <h3>NOUS CONNAÎTRE</h3>
-                            <a href="https://www.intelcia.com/fr/decouvrez-intelcia" target="_blank">À propos d'Intelcia</a><br>
-                            <a href="https://www.intelcia.com/fr/mentions-legales" target="_blank">Politique de confidentialité</a><br>
-                            <a href="https://www.intelcia.com/fr/mentions-legales" target="_blank">Mentions légales</a>
+
+                try:
+                    # Replaced local path with GitHub raw URL
+                    linkedin_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/linkedin.png"
+                    instagram_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/Instagram_icon.png"
+                    linkedin_b64 = base64.b64encode(requests.get(linkedin_url).content).decode()
+                    instagram_b64 = base64.b64encode(requests.get(instagram_url).content).decode()
+
+                    st.markdown(f"""
+                    <style>
+                    .footer {{
+                        background: linear-gradient(to right, #dd6aa4, #87559e);
+                        padding: 40px;
+                        color: white;
+                        text-align: left;
+                        width: 100%;
+                        position: relative;
+                    }}
+                    .footer-container {{
+                        display: flex;
+                        justify-content: space-between;
+                        max-width: 1600px;
+                        margin: auto;
+                    }}
+                    .footer-section {{
+                        flex: 1;
+                        margin: 0 30px;
+                    }}
+                    h3 {{
+                        margin-bottom: 10px;
+                        font-size: 16px;
+                    }}
+                    .footer a {{
+                        color: white;
+                        text-decoration: none;
+                        font-size: 14px;
+                    }}
+                    a:hover {{
+                        text-decoration: underline;
+                    }}
+                    .footer .footer-end {{
+                        text-align: center;
+                        margin-top: 20px;
+                        font-size: 12px;
+                    }}
+                    .footer .social-links {{
+                        margin-top: 10px;
+                    }}
+                    .footer .social-links a {{
+                        margin-right: 15px;
+                    }}
+                    </style>
+                    <div class="footer">
+                        <div class="footer-container">
+                            <div class="footer-section">
+                                <h3>NOUS CONNAÎTRE</h3>
+                                <a href="https://www.intelcia.com/fr/decouvrez-intelcia" target="_blank">À propos d'Intelcia</a><br>
+                                <a href="https://www.intelcia.com/fr/mentions-legales" target="_blank">Politique de confidentialité</a><br>
+                                <a href="https://www.intelcia.com/fr/mentions-legales" target="_blank">Mentions légales</a>
+                            </div>
+                            <div class="footer-section">
+                                <h3>NOUS CONTACTER</h3>
+                                <a href="https://www.intelcia.com/fr/contactez-nous" target="_blank">Contact</a><br>
+                                <a href="https://www.intelcia.com/fr/adresse" target="_blank">Adresse de nos sites</a>
+                            </div>
                         </div>
-                        <div class="footer-section">
-                            <h3>NOUS CONTACTER</h3>
-                            <a href="https://www.intelcia.com/fr/contactez-nous" target="_blank">Contact</a><br>
-                            <a href="https://www.intelcia.com/fr/adresse" target="_blank">Adresse de nos sites</a>
+                        <div class="footer-end">
+                            © 2015 Intelcia group | Talent Academy<br>
+                            <div class="social-links">
+                                <a href="https://www.intelcia.com/it" target="_blank"><img src="data:image/png;base64,{instagram_b64}" alt="Intelcia" style="height: 20px;"></a>
+                                <a href="https://www.linkedin.com/company/intelcia/posts/?feedView=all" target="_blank"><img src="data:image/png;base64,{linkedin_b64}" alt="LinkedIn" style="height: 20px;"></a>
+                            </div>
                         </div>
                     </div>
-                    <div class="footer-end">
-                        © 2015 Intelcia group | Talent Academy<br>
-                        <div class="social-links">
-                            <a href="https://www.intelcia.com/it" target="_blank"><img src="data:image/png;base64,{intelcia_base64}" alt="Intelcia" style="height: 20px;"></a>
-                            <a href="https://www.linkedin.com/company/intelcia/posts/?feedView=all" target="_blank"><img src="data:image/png;base64,{linkedin_base64}" alt="LinkedIn" style="height: 20px;"></a>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
+                except Exception as e:
+                    st.error("Erreur lors du chargement des icônes de réseaux sociaux.")
+
         elif menu == "2-Chargez Historique":
             st.sidebar.success("""
             ## 📖 info fichier d'upload'
@@ -1455,7 +1510,6 @@ class Application:
                     )
                     if data is not None:
                         st.subheader("")
-                        import seaborn as sns
                         import seaborn as sns
                         import matplotlib.pyplot as plt
 
@@ -1632,7 +1686,7 @@ class Application:
                         if st.session_state.prediction_type == 'tranche':
                             model_types = ['svr']
                         else:
-                            model_types =  ['huber', 'elasticnet']###algoalgo
+                            model_types =  ['huber', 'elasticnet']  # example
                         total_models = len(model_types)
                         completed = 0
                         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1698,7 +1752,6 @@ class Application:
                             df_predictions = pd.DataFrame({"Date": future_dates, "Forecast": future_predictions})
                             df_predictions["Day"] = df_predictions["Date"].dt.date
 
-
                             holiday_dates = [pd.to_datetime(h).date() for h in st.session_state.holidays]
                             for idx, d in enumerate(future_dates):
                                 if st.session_state.predict_saturday_as_zero and d.weekday() == 5:
@@ -1709,6 +1762,7 @@ class Application:
                                     future_predictions[idx] = 0
                                 if st.session_state.predict_holidays_as_zero and d.date() in holiday_dates:
                                     future_predictions[idx] = 0
+
                             df_predictions = pd.DataFrame({"Date": future_dates, "Forecast": future_predictions})
                             df_history = pd.DataFrame({
                                 "Date": list(data["date"]) + list(future_dates),
@@ -1730,8 +1784,10 @@ class Application:
                                 font=dict(color="white")
                             )
                             st.plotly_chart(fig_forecast, use_container_width=True)
+
                             df_tranche = df_predictions.copy()
                             df_tranche["Hour"] = df_tranche["Date"].dt.hour
+
                             output = io.BytesIO()
                             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                                 import matplotlib.pyplot as plt
@@ -1744,6 +1800,7 @@ class Application:
                                     "Date fin": [str(historical_end), str(end_date)]
                                 })
                                 df_dates.to_excel(writer, sheet_name="Dates", index=False)
+
                                 fig, ax = plt.subplots(figsize=(10, 5))
                                 df_history[df_history["Type"] == "Historique"].plot(
                                     x="Date", y="Volume", ax=ax, color="blue", label="Historique"
@@ -1753,20 +1810,25 @@ class Application:
                                 )
                                 ax.set_title("Historique vs Prévision")
                                 ax.legend()
+
                                 graph_bytes = io.BytesIO()
                                 plt.savefig(graph_bytes, format="png", bbox_inches="tight")
                                 plt.close(fig)
                                 graph_bytes.seek(0)
                                 img_data = graph_bytes.read()
+
                                 workbook = writer.book
                                 worksheet_graph = workbook.add_worksheet("Graph")
                                 worksheet_graph.insert_image("A1", "graph.png", {'image_data': io.BytesIO(img_data)})
+
                                 df_history.to_excel(writer, sheet_name="Historique & Graph", index=False)
                                 worksheet_history = writer.sheets["Historique & Graph"]
                                 worksheet_history.insert_image("G2", "graph.png", {'image_data': io.BytesIO(img_data)})
+
                                 df_daily = data.groupby(data["date"].dt.date)["volume"].sum().reset_index()
                                 df_daily.columns = ["Date", "Volume"]
                                 df_daily.to_excel(writer, sheet_name="Volume Jour", index=False)
+
                             output.seek(0)
                             excel_data = output.getvalue()
                             timestamp = datetime.now().strftime("%H_%M_%S_%d_%m_%Y")
@@ -1776,13 +1838,16 @@ class Application:
                                 file_name=f"HIMA_prediction_{timestamp}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
+
                             st.markdown("---")
                             col1, col2, col3 = st.columns([1, 2, 1])
                             with col1:
                                 try:
-                                    banner = Image.open(r"C:\Users\dell\Desktop\CE.png")
-                                    new_size = (banner.width // 2, banner.height // 2)
-                                    banner_resized = banner.resize(new_size, Image.Resampling.LANCZOS)
+                                    # Replaced local path with GitHub raw URL
+                                    banner_url = "https://raw.githubusercontent.com/HIMA242/MIMRA2023/main/CE.png"
+                                    banner_img = Image.open(io.BytesIO(requests.get(banner_url).content))
+                                    new_size = (banner_img.width // 2, banner_img.height // 2)
+                                    banner_resized = banner_img.resize(new_size, Image.Resampling.LANCZOS)
                                     st.image(banner_resized, caption="© 2025 HIMA_By_WFM", width=new_size[0])
                                 except Exception as e:
                                     logging.error(f"Erreur lors du chargement du bandeau: {e}")
