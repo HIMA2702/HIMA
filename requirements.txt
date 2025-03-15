@@ -1,0 +1,17 @@
+streamlit
+tensorflow
+numpy
+pandas
+matplotlib
+plotly
+statsmodels
+chardet
+holidays
+torch
+lightgbm
+catboost
+optuna
+darts
+neuralforecast
+scikit-learn
+Pillow
