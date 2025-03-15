@@ -1679,7 +1679,7 @@ class Application:
                                 model_type=best_model_name, weekday_weights=weekday_weights
                             )
                             st.success("✅ Prédiction terminée. Résultats sauvegardés.")
-                            st.write(f"Résultats : Meilleur modèle {best_model_name} avec R² : {best_r2 * 100:.2f}% et MAE : {results[best_model_name]['MAE']:.2f}")
+                            #st.write(f"Résultats : Meilleur modèle {best_model_name} avec R² : {best_r2 * 100:.2f}% et MAE : {results[best_model_name]['MAE']:.2f}")
 
                             df_predictions = pd.DataFrame({"Date": future_dates, "Forecast": future_predictions})
                             df_predictions["Day"] = df_predictions["Date"].dt.date
