@@ -1,9 +1,9 @@
 # 1) TensorFlow CPU pour Python 3.12
 #    À partir de mars 2025, la version 2.18.1 est disponible sur PyPI pour la 3.12.
-tensorflow-cpu==2.18.1
+tensorflow-cpu
 
 # 2) PyTorch pour Python 3.12 (la version CPU est installée si aucune GPU n'est détectée)
-torch==2.1.0
+torch
 
 # 3) Autres librairies
 catboost==1.2
