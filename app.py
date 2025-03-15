@@ -316,7 +316,7 @@ class FTTHPredictor:
                 title="📉 Tendance des Volumes dans le Temps",
                 title_font=dict(size=18, color="white")
             )
-            st.plotly_chart(fig_time_series, use_container_width=True)
+            st.plotly_chart(fig_time_series, width=True)
             st.subheader("Graphe Dynamique")
             plt.style.use('seaborn-v0_8-bright')
             fig, ax = plt.subplots(1, 2, figsize=(14, 5))
@@ -449,7 +449,7 @@ class FTTHPredictor:
             type="buttons",
             buttons=[dict(label="Play", method="animate", args=[None])]
         )])
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width=True)
 
     def split_train_test(self, data, train_ratio=0.8):
         train_size = int(len(data) * train_ratio)
@@ -1202,7 +1202,7 @@ class Application:
                 # mapintelcia.png
                 photo1 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/mapintelcia.png")
                 if photo1:
-                    st.image(photo1, caption="", use_container_width=True)
+                    st.image(photo1, caption="", width=True)
                 else:
                     st.write("Photo 1 non disponible.")
 
@@ -1248,7 +1248,7 @@ class Application:
                 # photo2.png
                 photo2 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/photo2.png")
                 if photo2:
-                    st.image(photo2, caption="", use_container_width=True)
+                    st.image(photo2, caption="", width=True)
                 else:
                     st.write("Photo 2 non disponible.")
 
@@ -1717,7 +1717,7 @@ class Application:
                                 plot_bgcolor="#0a2832",
                                 font=dict(color="white")
                             )
-                            st.plotly_chart(fig_forecast, use_container_width=True)
+                            st.plotly_chart(fig_forecast, width=True)
 
                             df_tranche = df_predictions.copy()
                             df_tranche["Hour"] = df_tranche["Date"].dt.hour
