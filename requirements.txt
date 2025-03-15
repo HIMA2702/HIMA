@@ -1,12 +1,7 @@
-# 1) TensorFlow CPU pour Python 3.12
-#    À partir de mars 2025, la version 2.18.1 est disponible sur PyPI pour la 3.12.
-tensorflow-cpu
+tensorflow-cpu==2.19.0
+torch==2.6.0
+catboost
 
-# 2) PyTorch pour Python 3.12 (la version CPU est installée si aucune GPU n'est détectée)
-torch
-
-# 3) Autres librairies
-catboost==1.2
 lightgbm==3.3.5
 optuna==3.1.1
 statsmodels==0.13.5
@@ -16,12 +11,13 @@ plotly==5.14.1
 seaborn==0.12.2
 matplotlib==3.7.1
 pandas==2.1.1
-numpy
 scikit-learn==1.2.2
 Pillow==9.5.0
 xlsxwriter==3.0.9
 darts==0.23.1
-neuralforecast==1.4.0
 
-# Enfin, Streamlit
+# Use a newer neuralforecast (3.x) so we don’t conflict on protobuf.
+neuralforecast==3.0.0
+
+# Finally, Streamlit
 streamlit==1.24.1
