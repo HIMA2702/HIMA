@@ -1036,7 +1036,7 @@ class Application:
         st.sidebar.title("🌟Navigation")
         st.markdown(
             """<style>
-            [data-testid="stSidebar"]{background:linear-gradient(to bottom,#008049,#00274d);color:white;padding:20px;border-radius:10px;}
+            [data-testid="stSidebar"]{background:linear-gradient(to bottom,#008049,#007e80);color:white;padding:20px;border-radius:10px;}
             .sidebar-title{color:white !important;font-size:22px !important;font-weight:bold;text-align:center;}
             [data-testid="stRadio"]{background:rgba(255,255,255,0.2);border-radius:10px;padding:10px;color:white;}
             [role="radiogroup"] label div{background:#ff1744 !important;color:white !important;border-radius:10px;padding:10px;transition:0.3s;}
