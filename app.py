@@ -1248,7 +1248,7 @@ class Application:
                 # photo2.png
                 photo2 = load_image_from_url("https://raw.githubusercontent.com/HIMA2702/HIMA/main/photo2.png")
                 if photo2:
-                    st.image(photo2, caption="", width=600)
+                    st.image(photo2, caption="", width=1000)
                 else:
                     st.write("Photo 2 non disponible.")
 
