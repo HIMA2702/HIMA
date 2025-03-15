@@ -1,11 +1,11 @@
-# 1) TensorFlow CPU for Python 3.12
-#    As of March 2025, 2.18.1 is available on PyPI for 3.12.
+# 1) TensorFlow CPU pour Python 3.12
+#    À partir de mars 2025, la version 2.18.1 est disponible sur PyPI pour la 3.12.
 tensorflow-cpu==2.18.1
 
-# 2) PyTorch for Python 3.12 (CPU-only build is auto-detected if no GPU is found)
+# 2) PyTorch pour Python 3.12 (la version CPU est installée si aucune GPU n'est détectée)
 torch==2.1.0
 
-# 3) Other libraries
+# 3) Autres librairies
 catboost==1.2
 lightgbm==3.3.5
 optuna==3.1.1
@@ -23,5 +23,5 @@ xlsxwriter==3.0.9
 darts==0.23.1
 neuralforecast==1.4.0
 
-# Finally, Streamlit
+# Enfin, Streamlit
 streamlit==1.24.1
