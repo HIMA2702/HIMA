@@ -644,40 +644,7 @@ class FTTHPredictor:
             final_model.fit(X_train_reshaped, y_train)
             return final_model
 
-        elif model_type_lower == 'ttm':
-            model = Sequential()
-            model.add(Dense(1024, input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.001)))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.3))
-            model.add(Dense(1000, kernel_regularizer=l2(0.001)))
-            model.add(LeakyReLU(alpha=0.3))
-            model.add(Dropout(0.2))
-            model.add(Dense(512, kernel_regularizer=l2(0.001)))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.2))
-            model.add(Dense(328, kernel_regularizer=l2(0.001)))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.2))
-            model.add(Dense(328, kernel_regularizer=l2(0.001)))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.2))
-            model.add(Dense(400, kernel_regularizer=l2(0.0001)))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.3))
-            model.add(Dense(350, kernel_regularizer=l2(0.0001)))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.3))
-            model.add(Dense(1, activation='linear'))
-            optimizer = Adam(learning_rate=0.0005, decay=1e-5)
-            model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
-            st.write("📊 **Résumé du modèle TTM :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=5, min_lr=1e-6, verbose=2)
-            lr_logger = LearningRateLogger()
-            model.fit(X_train, y_train, epochs=200, batch_size=8, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
-            st.write("Modèle TTM entraîné.")
-            return model
+        
 
         elif model_type_lower == 'llama':
             model = Sequential()
@@ -698,26 +665,7 @@ class FTTHPredictor:
             model.fit(X_train, y_train, epochs=200, batch_size=8, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
             return model
 
-        elif model_type_lower == 'timexer':
-            model = Sequential()
-            model.add(Dense(1024, input_shape=(X_train.shape[1],), activation='relu'))
-            model.add(Dropout(0.2))
-            model.add(Dense(800, activation='relu', kernel_regularizer=l2(0.01)))
-            model.add(Dropout(0.3))
-            model.add(Dense(500, activation='relu', kernel_regularizer=l2(0.01)))
-            model.add(Dropout(0.3))
-            model.add(Dense(250, activation='relu', kernel_regularizer=l2(0.01)))
-            model.add(Dropout(0.2))
-            model.add(Dense(1, activation='linear'))
-            optimizer = Adam(learning_rate=0.0005)
-            model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
-            st.write("📊 **Résumé du modèle Timexer :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=2)
-            model.fit(X_train, y_train, epochs=350, batch_size=8, validation_split=0.2, callbacks=[early_stop], verbose=2)
-            st.write("Modèle Timexer entraîné.")
-            return model
+        
 
         elif model_type_lower == 'nhits':
             model = Sequential()
@@ -742,52 +690,32 @@ class FTTHPredictor:
                       callbacks=[early_stop, lr_scheduler], verbose=2)
             st.write("✅ Modèle NHITS (Optimisé) entraîné.")
             return model
+      
 
-        elif model_type_lower == 'moirai':
+         elif model_type_lower == 'softs':
+            from tensorflow.keras.models import Sequential
+            from tensorflow.keras.layers import LeakyReLU
+            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
+            from tensorflow.keras.optimizers import AdamW
+            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+            from tensorflow.keras.regularizers import l2
             model = Sequential()
-            model.add(Dense(300, activation='relu', input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.005)))
-            model.add(Dropout(0.25))
-            model.add(Dense(512, activation='relu', kernel_regularizer=l2(0.005)))
-            model.add(Dropout(0.25))
-            model.add(Dense(256, activation='relu', kernel_regularizer=l2(0.005)))
-            model.add(Dropout(0.25))
-            model.add(Dense(820, activation='relu', kernel_regularizer=l2(0.005)))
-            model.add(Dropout(0.25))
-            model.add(Dense(200, activation='relu'))
-            model.add(Dropout(0.15))
-            model.add(Dense(304, activation='relu'))
-            model.add(Dropout(0.15))
-            model.add(Dense(600, activation='relu'))
-            model.add(Dropout(0.15))
-            model.add(Dense(1, activation='linear'))
-            optimizer = AdamW(learning_rate=0.0001, weight_decay=1e-5)
-            model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
-            st.write("📊 **Résumé du modèle Moirai (Optimisé) :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='loss', patience=20, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=7, min_lr=1e-6, verbose=2)
-            st.write(f"Training Optimized MOIRAI: Learning rate: {optimizer.learning_rate.numpy()}")
-            model.fit(X_train, y_train, epochs=400, batch_size=16, callbacks=[early_stop, reduce_lr], verbose=2)
-            return model
-
-        elif model_type_lower == 'softs':
-            model = Sequential()
-            model.add(Dense(600, input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.01)))
-            model.add(LeakyReLU(alpha=0.2))
+            model.add(Dense(512, input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.01)))
             model.add(Dropout(0.3))
-            model.add(Dense(700, kernel_regularizer=l2(0.01)))
-            model.add(LeakyReLU(alpha=0.15))
+
+            model.add(Dense(256, kernel_regularizer=l2(0.01)))
+
+            model.add(Dropout(0.2))
+
+
             model.add(Dropout(0.1))
-            model.add(Dense(500, kernel_regularizer=l2(0.01)))
-            model.add(LeakyReLU(alpha=0.1))
+            model.add(Dense(64))
+
             model.add(Dropout(0.1))
-            model.add(Dense(600))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.1))
-            model.add(Dense(400))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dense(300))
-            model.add(LeakyReLU(alpha=0.2))
+            model.add(Dense(32))
+
+            model.add(Dense(16))
+
             model.add(Dropout(0.1))
             model.add(Dense(1, activation='linear'))
             optimizer = AdamW(learning_rate=0.0001, weight_decay=1e-5)
@@ -798,30 +726,7 @@ class FTTHPredictor:
             reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.1, patience=5, min_lr=1e-6, verbose=2)
             lr_logger = LearningRateLogger()
             st.write(f"Training Optimized SOFTS: Learning rate: {optimizer.learning_rate.numpy()}")
-            model.fit(X_train, y_train, epochs=200, batch_size=6, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
-            return model
-
-        elif model_type_lower == 'lstm':
-            model = Sequential()
-            model.add(Bidirectional(LSTM(512, return_sequences=True, activation='relu', input_shape=(X_train.shape[1], X_train.shape[2]))))
-            model.add(Dropout(0.4))
-
-            model.add(LSTM(256, return_sequences=True, activation='relu'))
-            model.add(Dropout(0.3))
-            model.add(LSTM(100, return_sequences=True, activation='relu'))
-            model.add(Dropout(0.1))
-
-            model.add(LSTM(8, return_sequences=False, activation='relu'))
-            model.add(Dense(1, activation='linear'))
-            model.add(tf.keras.layers.BatchNormalization())
-            optimizer = AdamW(learning_rate=0.0001, weight_decay=1e-5)
-            model.compile(optimizer=optimizer, loss='mean_squared_error')
-            st.write("📊 **Résumé du modèle LSTM Amélioré :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=5, min_lr=1e-6, verbose=2)
-            model.fit(X_train.reshape(-1, X_train.shape[1], 1), y_train, epochs=160, batch_size=16, callbacks=[early_stop, reduce_lr], verbose=2)
-            st.write("✅ Modèle LSTM Amélioré entraîné.")
+            model.fit(X_train, y_train, epochs=200, batch_size=12, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
             return model
 
         elif model_type_lower == 'mlp':
@@ -989,7 +894,7 @@ class FTTHPredictor:
                 if force_zero(1, f_date) == 0:
                     prediction = np.array([0])
                 else:
-                    ml_models = ['catboost','ensemble', 'svr', 'adaboost', 'huber', 'ridge', 'elasticnet', 'lightgbm']
+                    ml_models = ['catboost','ensemble', 'svr', 'adaboost', 'huber', 'ridge', 'elasticnet']
                     nn_models = ['lstm','tcn',  'mlp','nhits','gru','llama','ttm']
                     if model_type_lower in ml_models:
                         prediction = model.predict(last_sequence.reshape(1, -1))
@@ -1612,7 +1517,7 @@ class Application:
                         if st.session_state.prediction_type == 'tranche':
                             model_types = ['svr']  # par exemple
                         else:
-                            model_types = ['huber', 'elasticnet']  # ajustez selon vos besoins
+                            model_types = ['svr', 'huber', 'elasticnet','nhits','llama','softs']  # ajustez selon vos besoins
 
                         total_models = len(model_types)
                         completed = 0
