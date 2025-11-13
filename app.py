@@ -5,18 +5,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import unicodedata
-# Imports BigQuery
+
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import asyncio
-# On peut retirer le "import os" et "import pandas" et "import streamlit" ici car ils sont déjà en haut,
-# mais les laisser n'est pas une erreur (juste de la redondance).
-
-# ... le reste du code
-
-# --- NOUVEAU HELPER : AGENT D'AUTOMATISATION ---
-# Utilisation de @st.cache_data peut être délicat avec Playwright/async,
-# mais nous l'utilisons pour stocker le résultat de la dernière exécution.
 
 @st.cache_data(ttl=3600)
 def get_mycapa_data(username: str, password: str, url: str) -> pd.DataFrame:
@@ -133,13 +125,7 @@ def load_data_from_bigquery(project_id: str, query: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-# =========================================================
-# CONFIG & STYLE (Refonte V2)
-# =========================================================
 st.set_page_config(page_title="AI Planning Hub (Effectif Réel)", layout="wide", initial_sidebar_state="expanded")
-
-# --- AJOUT DE LA BANNIÈRE AVEC UNE LARGEUR RÉDUITE (600px) ---
-IMAGE_BANNER_PATH = r"G:\Drive partagés\DIRECTION WFM\WFM\Commun\Pulsar\banWFM1.png"
 
 try:
     # Largeur réduite à 600 pixels
@@ -207,9 +193,6 @@ div.css-1r6dm7m, div.css-1r6dm7m > img {
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# HELPERS (Fonctions utilitaires)
-# ---------------------------------------------------------
 def read_any(path_or_file, sheet_name=None, dtype: Optional[Dict[str, type]] = None):
     """Lit CSV/XLSX depuis chemin ou uploader Streamlit, avec support de sheet_name et dtype."""
     if hasattr(path_or_file, "name"):
@@ -303,9 +286,7 @@ t0, tmap, t1, t2, t3, t4, t5, t6, tcapa = st.tabs([
     "⑨ Capacité Engagée vs Réelle ⚖️"
 ])
 
-# =========================================================
-# ① EFFECTIFS & CONGÉS — FILTRAGE DES ABSENTS (SÉQUENCE 1)
-# =========================================================
+
 with t0:
     st.header("📂 Étape 1 : Calcul de l'Effectif Réel Planifiable")
 
