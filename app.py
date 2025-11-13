@@ -292,7 +292,7 @@ with t0:
 
     st.markdown("""
         <div class='note'>
-            **Séquence :** Nettoyage ➡️ Garder les agents **NON** en congés ➡️ Effectif Réel.
+          # **Séquence :** Nettoyage ➡️ Garder les agents **NON** en congés ➡️ Effectif Réel.
         </div>
     """, unsafe_allow_html=True)
 
