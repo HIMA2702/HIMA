@@ -11,7 +11,7 @@ from google.oauth2 import service_account
 import asyncio
 # On peut retirer le "import os" et "import pandas" et "import streamlit" ici car ils sont déjà en haut,
 # mais les laisser n'est pas une erreur (juste de la redondance).
-from playwright.async_api import async_playwright
+
 # ... le reste du code
 
 # --- NOUVEAU HELPER : AGENT D'AUTOMATISATION ---
