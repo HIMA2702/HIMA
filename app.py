@@ -1,1643 +1,906 @@
-
-import streamlit as st, os, io, webbrowser, base64, time, warnings, logging, random
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, LSTM, GRU, Conv1D, Flatten, Bidirectional, LeakyReLU, ELU, GlobalAveragePooling1D, MultiHeadAttention, LayerNormalization, Activation
-from tensorflow.keras.regularizers import l2
-from tensorflow.keras.optimizers import Adam, AdamW, RMSprop
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback
-import numpy as np, pandas as pd, matplotlib.pyplot as plt, plotly.express as px, plotly.graph_objects as go
-import statsmodels.api as sm, chardet, holidays, torch, tensorflow as tf, lightgbm as lgb, catboost as cb
-import optuna
-from darts.models import NHiTSModel
-from tensorflow.keras.layers import LeakyReLU
-from darts import TimeSeries
-import base64
-from neuralforecast.models import NHITS
-from neuralforecast.losses.pytorch import MAE
-from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.layers import Input, Dense, Flatten, LSTM, Dropout, GRU, Conv1D, MaxPooling1D, Bidirectional, LeakyReLU, ELU, GlobalAveragePooling1D, BatchNormalization, MultiHeadAttention, LayerNormalization
-from tensorflow.keras.optimizers import Adam, AdamW
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback
-from tensorflow.keras.regularizers import l2
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor, VotingRegressor, AdaBoostRegressor
-from sklearn.linear_model import Ridge, Lasso, HuberRegressor, ElasticNet
-from sklearn.svm import SVR
-from sklearn.neural_network import MLPRegressor
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-from sklearn.model_selection import TimeSeriesSplit
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+import os, io, glob, json, time
 from datetime import datetime, timedelta
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import Image
-from statsmodels.tsa.seasonal import seasonal_decompose
+from typing import Optional, Dict, List
+import numpy as np
+import pandas as pd
+import streamlit as st
+import unicodedata
+# Imports BigQuery
+from google.cloud import bigquery
+from google.oauth2 import service_account
+import asyncio
+# On peut retirer le "import os" et "import pandas" et "import streamlit" ici car ils sont déjà en haut,
+# mais les laisser n'est pas une erreur (juste de la redondance).
+from playwright.async_api import async_playwright
+# ... le reste du code
 
-warnings.filterwarnings("ignore")
-logging.basicConfig(
-    filename='app.log',
-    level=logging.ERROR,
-    format='%(asctime)s:%(levelname)s:%(message)s'
-)
+# --- NOUVEAU HELPER : AGENT D'AUTOMATISATION ---
+# Utilisation de @st.cache_data peut être délicat avec Playwright/async,
+# mais nous l'utilisons pour stocker le résultat de la dernière exécution.
 
-seed = int(time.time())
-random.seed(seed)
-np.random.seed(seed)
-tf.random.set_seed(seed)
-print(f"Utilisation du seed: {seed}")
-
-# Initialisation des variables de session
-if 'holidays' not in st.session_state:
-    st.session_state.holidays = []
-if 'holiday_weights' not in st.session_state:
-    st.session_state.holiday_weights = []
-if 'outliers' not in st.session_state:
-    st.session_state.outliers = []
-if 'predictions_csv' not in st.session_state:
-    st.session_state.predictions_csv = None
-if 'prediction_type' not in st.session_state:
-    st.session_state.prediction_type = "Jour"
-if 'working_hours_start' not in st.session_state:
-    st.session_state.working_hours_start = "08:00"
-if 'working_hours_end' not in st.session_state:
-    st.session_state.working_hours_end = "18:00"
-if 'predict_holidays_as_zero' not in st.session_state:
-    st.session_state.predict_holidays_as_zero = False
-if 'predict_saturday_as_zero' not in st.session_state:
-    st.session_state.predict_saturday_as_zero = False
-if 'predict_sunday_as_zero' not in st.session_state:
-    st.session_state.predict_sunday_as_zero = False
-if 'predict_weekends_as_zero' not in st.session_state:
-    st.session_state.predict_weekends_as_zero = False
-
-def get_base64_image(image_path):
-    try:
-        with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
-    except Exception as e:
-        st.error(f"Erreur lors du chargement de l'image : {image_path} ({e})")
-        return None
-
-st.markdown(
+@st.cache_data(ttl=3600)
+def get_mycapa_data(username: str, password: str, url: str) -> pd.DataFrame:
     """
-    <style>
-    .block-container { padding-top: 0px !important; margin-top: 0px !important; }
-    header { margin: 0px !important; padding: 0px !important; }
-    .marquee-container { margin-bottom: 0px !important; padding-bottom: 5px !important; }
-    img { margin-top: 0px !important; padding-top: 0px !important; }
-    </style>
-    """, unsafe_allow_html=True
-)
+    Déclenche la fonction asynchrone pour se connecter à MyCapa et télécharger le fichier.
 
-st.markdown(
-    f"""
-    <style>
-    .block-container {{
-        padding-top: 0px !important;
-        margin-top: 0px !important;
-        background: white;
-        max-width: 100%;
-        margin: auto;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }}
-    body {{ background-color: #f5f5f5; font-family: 'Arial', sans-serif; color: #333; }}
-    .marquee-container {{
-        position: fixed; top: 0; left: 0; width: 100%;
-        background: rgba(0, 64, 128, 0.9); padding: 10px 0;
-        text-align: center; z-index: 9999; overflow: hidden; white-space: nowrap;
-    }}
-    .marquee-text {{
-        display: inline-block; animation: marquee 10s linear infinite;
-        font-size: 2rem; font-weight: bold; color: white;
-    }}
-    @keyframes marquee {{ from {{ transform: translateX(100%); }} to {{ transform: translateX(-100%); }} }}
-    .button-container {{ position: fixed; top: 15px; left: 10px; z-index: 100; }}
-    .custom-button {{
-        background-color: #004080; color: white; border: none;
-        padding: 10px 20px; border-radius: 5px; font-size: 14px;
-        font-weight: bold; cursor: pointer; transition: 0.3s; text-decoration: none;
-        display: inline-block;
-    }}
-    .custom-button:hover {{ background-color: #003366; }}
-    .block-container {{ padding-top: 0px !important; }}
-    </style>
-    </div>
-    """, unsafe_allow_html=True
-)
+    Attention: Le code Streamlit est synchrone, on utilise asyncio.run pour exécuter la tâche.
+    Ceci peut ralentir l'application si l'exécution prend du temps.
+    """
 
-class LearningRateLogger(Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        lr = self.model.optimizer.learning_rate.numpy()
-        loss = logs.get('loss')
-        print(f"Epoch {epoch + 1}: Loss = {loss}, Learning rate = {lr}")
+    # Créer un dossier temporaire pour le téléchargement
+    DOWNLOAD_DIR = "temp_mycapa_downloads"
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-class GraphConvolution(tf.keras.layers.Layer):
-    def __init__(self, output_dim, **kwargs):
-        super(GraphConvolution, self).__init__(**kwargs)
-        self.output_dim = output_dim
+    try:
+        # Exécute la fonction asynchrone
+        df = asyncio.run(_run_playwright_download(username, password, url, DOWNLOAD_DIR))
+        return df
+    except Exception as e:
+        st.error(f"🚨 Échec de l'agent MyCapa : {e}")
+        return pd.DataFrame()
 
-    def build(self, input_shape):
-        self.kernel = self.add_weight(
-            name='kernel',
-            shape=(input_shape[-1], self.output_dim),
-            initializer='glorot_uniform',
-            trainable=True
-        )
-        super(GraphConvolution, self).build(input_shape)
 
-    def call(self, inputs):
-        n = inputs.shape[1]
-        A = np.zeros((n, n), dtype=np.float32)
-        for i in range(n):
-            A[i, i] = 1.0
-            if i > 0:
-                A[i, i-1] = 1.0
-            if i < n-1:
-                A[i, i+1] = 1.0
-        A = tf.constant(A, dtype=tf.float32)
-        batch_size = tf.shape(inputs)[0]
-        A_batch = tf.tile(tf.expand_dims(A, 0), [batch_size, 1, 1])
-        support = tf.matmul(inputs, self.kernel)
-        output = tf.matmul(A_batch, support)
-        return output
+async def _run_playwright_download(username: str, password: str, url: str, download_path: str) -> pd.DataFrame:
+    """
+    Fonction asynchrone pour l'automatisation de la navigation et du téléchargement.
+    """
+    # ⚠️ REMPLACEZ CES SÉLECTEURS PAR LES VRAIS SÉLECTEURS HTML DE MYCAPA ⚠️
+    SELECTORS = {
+        "login_input": 'input[type="email"]', # Exemple générique
+        "password_input": 'input[type="password"]', # Exemple générique
+        "login_button": 'button[type="submit"]', # Exemple générique
+        "capacity_page_link": 'a[href*="/capacity/exports"]', # Lien vers la page d'export
+        "export_button": 'button:has-text("Exporter la Capacité")', # Bouton d'export
+        "download_link": '.download-container a' # Exemple de lien final
+    }
 
-# Fonction pour déterminer la saison à partir du mois
-def get_season(month):
-    if month in [12, 1, 2]:
-        return "hiver"
-    elif month in [3, 4, 5]:
-        return "printemps"
-    elif month in [6, 7, 8]:
-        return "été"
-    else:
-        return "automne"
+    async with async_playwright() as p:
+        # Lance le navigateur en mode sans tête (headless=True) pour la vitesse
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
 
-class FTTHPredictor:
-    def __init__(self, seq_length, prediction_type):
-        self.seq_length = seq_length
-        self.prediction_type = prediction_type
-        self.encoder = OneHotEncoder(sparse_output=False)
+        st.toast("🌐 Connexion à MyCapa en cours...")
+        await page.goto(url)
 
-    # ------------------------------
-    # Méthodes existantes (détection CSV, preprocess, etc.)
-    # ------------------------------
-    def detect_separator_and_encoding(self, filepath):
-        with open(filepath, 'rb') as f:
-            result = chardet.detect(f.read(10000))
-        encoding = result['encoding']
-        with open(filepath, 'r', encoding=encoding) as file:
-            line = file.readline()
-            separator = ',' if ',' in line else ';' if ';' in line else '\t'
-        return separator, encoding
+        # 1. Connexion
+        await page.fill(SELECTORS["login_input"], username)
+        await page.fill(SELECTORS["password_input"], password)
+        await page.click(SELECTORS["login_button"])
 
-    def is_15_minute_data(self, data):
-        time_deltas = data['date'].diff().dropna()
-        return (time_deltas == timedelta(minutes=15)).all()
+        # Attendre la navigation après la connexion (par exemple, vers le dashboard)
+        await page.wait_for_url("**/dashboard**", timeout=30000)
 
-    def replace_outliers_with_median(self, data, outlier_dates):
-        if 'volume' in data.columns:
-            column_name = 'volume'
-        elif 'call volumes' in data.columns:
-            column_name = 'call volumes'
-        else:
-            return data
-        median_value = data[column_name].median()
-        data.loc[data['date'].isin(outlier_dates), column_name] = median_value
-        return data
+        # 2. Navigation vers la page de Capacité/Export
+        st.toast("🔗 Navigation vers la page d'export...")
+        await page.click(SELECTORS["capacity_page_link"])
+        await page.wait_for_selector(SELECTORS["export_button"])
 
-    def detect_recurring_holidays(self, data, threshold=0.2):
-        data['month_day'] = data['date'].dt.strftime('%m-%d')
-        holiday_candidates = defaultdict(list)
-        for date_, volume in data.groupby('month_day')['volume'].mean().items():
-            if volume < data['volume'].mean() * threshold:
-                holiday_candidates[date_].append(volume)
-        recurring_holidays = [md for md, vols in holiday_candidates.items() if len(vols) > 1]
-        return recurring_holidays
+        # 3. Déclenchement du Téléchargement
+        # Ceci est la partie la plus critique et dépend de la réponse du site.
+        async with page.expect_download(timeout=60000) as download_info:
+            await page.click(SELECTORS["export_button"])
 
-    def calculate_ema(self, data, span=7):
-        data['EMA_volume'] = data['volume'].ewm(span=span, adjust=False).mean()
-        return data
+        download = await download_info.value
 
-    def calculate_weekly_weights(self, data):
-        data = self.calculate_ema(data, span=7)
-        data['daily_weight'] = data['volume'] / data['EMA_volume']
-        data['weekday'] = data['date'].dt.weekday
-        weekday_weights = data.groupby('weekday')['daily_weight'].mean().reindex(range(7), fill_value=1)
-        return data, weekday_weights
+        # Enregistrement du fichier
+        final_path = os.path.join(download_path, download.suggested_filename)
+        await download.save_as(final_path)
 
-    def add_time_features(self, data):
-        from scipy.signal import savgol_filter
-        from statsmodels.tsa.seasonal import seasonal_decompose
+        await browser.close()
+        st.toast(f"✅ Fichier téléchargé et enregistré : {final_path}")
 
-        # Extraction des caractéristiques temporelles existantes
-        data['month'] = data['date'].dt.month
-        data['day_of_month'] = data['date'].dt.day
-        data['week_of_year'] = data['date'].dt.isocalendar().week
-        data['day_of_week'] = data['date'].dt.weekday
-        data['is_weekend'] = (data['day_of_week'] >= 5).astype(int)
+        # 4. Lecture et Nettoyage des données
+        df_capa = pd.read_excel(final_path) # Assumer un format Excel
 
-        # Transformation cyclique des jours et mois
-        data['sin_day'] = np.sin(2 * np.pi * data['day_of_week'] / 7)
-        data['cos_day'] = np.cos(2 * np.pi * data['day_of_week'] / 7)
-        data['sin_month'] = np.sin(2 * np.pi * data['month'] / 12)
-        data['cos_month'] = np.cos(2 * np.pi * data['month'] / 12)
-
-        # Ajout de la variable 'saison' et encodage one-hot
-        data['season'] = data['month'].apply(get_season)
-        season_dummies = pd.get_dummies(data['season'], prefix='season')
-        data = pd.concat([data, season_dummies], axis=1)
-        data.drop('season', axis=1, inplace=True)
-
-        # Autres transformations
-        data['smoothed_volume'] = data['volume'].rolling(window=5, min_periods=1).mean()
-        data['ema_volume'] = data['volume'].ewm(span=5, adjust=False).mean()
-
-        try:
-            data['savgol_volume'] = savgol_filter(data['volume'], window_length=7, polyorder=2)
-        except Exception as e:
-            st.write("Savitzky-Golay a échoué :", e)
-            data['savgol_volume'] = data['volume']
-
-        data['rolling_mean_7'] = data['volume'].rolling(window=7, min_periods=1).mean()
-        data['rolling_std_7'] = data['volume'].rolling(window=7, min_periods=1).std().fillna(0)
-
-        data['adaptive_rolling_mean'] = self.adaptive_rolling_mean(data, base_window=7)
-        data['diff'] = data['volume'].diff().fillna(0)
-
-        try:
-            decomposition = seasonal_decompose(data['volume'], model='additive', period=7, extrapolate_trend='freq')
-            data['trend'] = decomposition.trend.fillna(method='bfill').fillna(method='ffill')
-            data['seasonal_component'] = decomposition.seasonal.fillna(method='bfill').fillna(method='ffill')
-        except Exception as e:
-            st.write("La décomposition saisonnière a échoué :", e)
-            data['trend'] = data['volume']
-            data['seasonal_component'] = 0
-
-        return data
-
-    def adaptive_rolling_mean(self, data, base_window=7):
-        volatility = data['volume'].rolling(window=base_window, min_periods=1).std().fillna(0)
-        normalized_volatility = volatility / (volatility.max() if volatility.max() != 0 else 1)
-        adaptive_window = (base_window * (1 - normalized_volatility)).round().astype(int)
-        adaptive_window = adaptive_window.replace(0, 1)
-        smoothed = []
-        for idx, win in enumerate(adaptive_window):
-            if idx < win:
-                smoothed.append(data['volume'].iloc[:idx+1].mean())
-            else:
-                smoothed.append(data['volume'].iloc[idx-win+1:idx+1].mean())
-        return smoothed
-
-    def load_and_preprocess_data(self, filepath, holidays_list, holiday_weights, outlier_dates,
-                                 predict_holidays_as_zero, predict_weekends_as_zero,
-                                 predict_saturday_as_zero, predict_sunday_as_zero, working_hours):
-        separator, encoding = self.detect_separator_and_encoding(filepath)
-        try:
-            data = pd.read_csv(filepath, sep=separator, encoding=encoding,
-                               parse_dates=['date'], dayfirst=True, infer_datetime_format=True)
-        except Exception as e:
-            logging.error(f"Error loading CSV: {e}")
-            st.error(f"Failed to load CSV: {e}")
-            return None, None, None, None
-
-        try:
-            if 'tranches' in data.columns:
-                data, data_scaled, scaler = self.handle_tranches_data(
-                    data, holidays_list, holiday_weights, outlier_dates,
-                    predict_holidays_as_zero, predict_weekends_as_zero,
-                    predict_saturday_as_zero, predict_sunday_as_zero, working_hours
-                )
-            elif 'date' in data.columns and 'volume' in data.columns:
-                data, data_scaled, scaler = self.handle_date_volume_data(
-                    data, holidays_list, holiday_weights, outlier_dates,
-                    predict_holidays_as_zero, predict_weekends_as_zero,
-                    predict_saturday_as_zero, predict_sunday_as_zero, working_hours
-                )
-            else:
-                raise ValueError("Le fichier CSV doit contenir les colonnes 'date' et 'volume', ou 'date', 'tranches' et 'call volumes'.")
-
-            recurring_holidays = self.detect_recurring_holidays(data)
-            recurring_holidays_dates = [pd.Timestamp(f"{year}-{md}")
-                                        for md in recurring_holidays
-                                        for year in range(data['date'].dt.year.min(), data['date'].dt.year.max() + 1)]
-            for recurring_holiday in recurring_holidays_dates:
-                if recurring_holiday not in holidays_list:
-                    holidays_list.append(recurring_holiday)
-                    holiday_weights.append(100)
-
-            data, weekday_weights = self.calculate_weekly_weights(data)
-            lag_limit = self.calculate_optimal_lags(data)
-
-            for i in range(1, lag_limit + 1):
-                data[f'volume_lag{i}'] = data['volume'].shift(i)
-            data.dropna(inplace=True)
-
-            st.subheader("📋 Aperçu des Données")
-            data_preview = data[['date', 'volume', 'month', 'day_of_month']].head(10)
-            data_preview.columns = ['Date', 'Volume', 'Mois', 'Jour du mois']
-            st.write(data_preview)
-
-            fig_time_series = go.Figure()
-            fig_time_series.add_trace(go.Scatter(
-                x=data["date"], y=data["volume"],
-                mode="lines+markers",
-                line=dict(color="lightgreen", width=2),
-                marker=dict(size=5, color="aqua"),
-                name="Volume"
-            ))
-            fig_time_series.update_layout(
-                width=1200,
-                height=500,
-                plot_bgcolor="rgb(10,40,50)",
-                paper_bgcolor="rgb(10,40,50)",
-                font=dict(color="white"),
-                xaxis=dict(showgrid=False, color="white"),
-                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.2)", color="white"),
-                title="📉 Tendance des Volumes dans le Temps",
-                title_font=dict(size=18, color="white")
-            )
-            st.plotly_chart(fig_time_series, use_container_width=True)
-            st.subheader("Graphe Dynamique")
-            plt.style.use('seaborn-v0_8-bright')
-            fig, ax = plt.subplots(1, 2, figsize=(14, 5))
-            plot_acf(data['volume'], ax=ax[0], lags=50)
-
-        except Exception as e:
-            logging.error(f"Error in data preprocessing: {e}")
-            st.error(f"Failed to preprocess data: {e}")
-            return None, None, None, None
-
-        return data, data_scaled, scaler, weekday_weights
-
-    def handle_tranches_data(self, data, holidays_list, holiday_weights, outlier_dates,
-                              predict_holidays_as_zero, predict_weekends_as_zero,
-                              predict_saturday_as_zero, predict_sunday_as_zero, working_hours):
-        data['date'] = pd.to_datetime(data['date'], errors='coerce')
-        data = data.dropna(subset=['date'])
-        for holiday, weight in zip(holidays_list, holiday_weights):
-            if predict_holidays_as_zero:
-                data.loc[data['date'] == holiday, 'call volumes'] = 0
-            else:
-                data.loc[data['date'] == holiday, 'call volumes'] *= weight / 100
-        for outlier_date in outlier_dates:
-            data = self.replace_outliers_with_median(data, outlier_dates)
-        data['call volumes'] = data['call volumes'].astype(float).ffill()
-        data = self.add_time_features(data)
-        volume_data = data['call volumes'].values.reshape(-1, 1)
-        scaler = StandardScaler()
-        data_scaled = scaler.fit_transform(volume_data)
-        return data, data_scaled, scaler
-
-    def handle_date_volume_data(self, data, holidays_list, holiday_weights, outlier_dates,
-                                 predict_holidays_as_zero, predict_weekends_as_zero,
-                                 predict_saturday_as_zero, predict_sunday_as_zero, working_hours):
-        data['date'] = pd.to_datetime(data['date'], errors='coerce')
-        data = data.dropna(subset=['date'])
-
-        for holiday, weight in zip(holidays_list, holiday_weights):
-            if predict_holidays_as_zero:
-                data.loc[data['date'] == holiday, 'volume'] = 0
-            else:
-                data.loc[data['date'] == holiday, 'volume'] *= weight / 100
-
-        for outlier_date in outlier_dates:
-            data = self.replace_outliers_with_median(data, outlier_dates)
-        data['volume'] = data['volume'].astype(float).ffill()
-
-        if not self.is_15_minute_data(data):
-            if self.prediction_type == 'tranche':
-                data = self.distribute_daily_volume_to_intervals(data, working_hours)
-
-        data = self.add_time_features(data)
-        volume_data = data['volume'].values.reshape(-1, 1)
-        scaler = StandardScaler()
-        data_scaled = scaler.fit_transform(volume_data)
-        return data, data_scaled, scaler
-
-    def distribute_daily_volume_to_intervals(self, data, working_hours):
-        start_hour, end_hour = working_hours
-        if end_hour <= start_hour:
-            raise ValueError("L'heure de fin doit être supérieure à l'heure de début.")
-        intervals = int((end_hour - start_hour) * 4)
-        data['volume_per_interval'] = data['volume'] / intervals
-        distributed_data = pd.DataFrame()
-        for _, row in data.iterrows():
-            base_time = datetime.combine(row['date'].date(), datetime.min.time()) + timedelta(hours=start_hour)
-            for i in range(intervals):
-                distributed_data = pd.concat([
-                    distributed_data,
-                    pd.DataFrame({
-                        'date': [base_time + timedelta(minutes=15 * i)],
-                        'volume': [row['volume_per_interval']]
-                    })
-                ], ignore_index=True)
-        return distributed_data
-
-    def calculate_optimal_lags(self, data):
-        if len(data) < 2:
-            return 1
-        nlags = min(100, len(data) - 1)
-        acf_values = sm.tsa.acf(data['volume'], nlags=nlags)
-        try:
-            optimal_lag = next((i for i, val in enumerate(acf_values) if abs(val) < 0.2),
-                               min(30, len(data)-1))
-        except StopIteration:
-            optimal_lag = min(30, len(data)-1)
-        return optimal_lag
-
-    def plot_outlier_graph(self, data):
-        fig = go.Figure()
-        frames = [
-            go.Frame(
-                data=[
-                    go.Scatter(
-                        x=data["date"][:k],
-                        y=data["volume"][:k],
-                        mode="lines",
-                        line=dict(color="lightgreen", width=2),
-                        name="Volume"
-                    )
-                ],
-                name=str(k)
-            ) for k in range(1, len(data))
-        ]
-        fig.add_trace(go.Scatter(
-            x=data["date"], y=data["volume"],
-            mode="lines",
-            line=dict(color="rgba(100, 255, 100, 0.2)", width=6),
-            name="Glow Effect",
-            showlegend=False
-        ))
-        fig.add_trace(go.Scatter(
-            x=data["date"], y=data["volume"],
-            mode="lines",
-            line=dict(color="lightgreen", width=2),
-            name="Volume"
-        ))
-        fig.update_layout(
-            plot_bgcolor="rgb(10,40,50)",
-            paper_bgcolor="rgb(10,40,50)",
-            font=dict(color="white", family="Poppins, sans-serif"),
-            xaxis=dict(showgrid=False, zeroline=False, color="white"),
-            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.2)", zeroline=False, color="white"),
-            title=dict(text="📈 Évolution des Données dans le Temps",
-                       font=dict(size=22, color="white", family="Arial Black"),
-                       x=0.5, y=0.95, xanchor="center", yanchor="top")
-        )
-        fig.update_traces(line=dict(dash="dot"), selector=dict(name="Volume"))
-        fig.update_layout(updatemenus=[dict(
-            type="buttons",
-            buttons=[dict(label="Play", method="animate", args=[None])]
-        )])
-        st.plotly_chart(fig, use_container_width=True)
-
-    def split_train_test(self, data, train_ratio=0.8):
-        train_size = int(len(data) * train_ratio)
-        if train_size == 0:
-            train_size = len(data) - 1
-        return data[:train_size], data[train_size:]
-
-    def create_sequences(self, data):
-        X, y = [], []
-        for i in range(len(data) - self.seq_length):
-            X.append(data[i:i + self.seq_length])
-            y.append(data[i + self.seq_length])
-        return np.array(X), np.array(y)
-
-    def save_results(self, future_dates, future_predictions, original_data):
-        future_predictions = [max(0, pred) for pred in future_predictions]
-        results_df = pd.DataFrame({
-            'date': future_dates,
-            'predicted_volume': future_predictions
+        # Nettoyage et standardisation (comme dans votre logique manuelle)
+        df_capa = df_capa.rename(columns={
+            "Nom_du_Projet_dans_MyCapa": "Projet",
+            "Capacite_Engagee_Colonne": "Capacité Engagée"
         })
-        original_data_filtered = original_data.drop(
-            columns=[col for col in original_data.columns if col.startswith("volume_lag")],
-            errors='ignore'
+        df_capa["Projet"] = df_capa["Projet"].astype(str).str.strip().str.upper()
+
+        return df_capa[['Projet', 'Capacité Engagée']].groupby('Projet').sum().reset_index()
+
+# Notez que le code ci-dessus est générique. Vous devez l'intégrer à votre application.
+def load_data_from_bigquery(project_id: str, query: str) -> pd.DataFrame:
+    """
+    Se connecte à BigQuery et exécute la requête, en utilisant les secrets Streamlit (.streamlit/secrets.toml).
+    """
+
+    # --- ÉTAPE 1 : AUTHENTIFICATION ---
+    try:
+        # Tente d'utiliser st.secrets pour l'authentification (doit correspondre à [gcp_service_account])
+        credentials_info = st.secrets["gcp_service_account"]
+        credentials = service_account.Credentials.from_service_account_info(credentials_info)
+    except KeyError:
+        st.error("🚨 BigQuery : La clé de service [gcp_service_account] n'a pas été trouvée dans .streamlit/secrets.toml. Veuillez configurer le fichier.")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"🚨 BigQuery : Erreur lors du chargement des secrets : {e}")
+        return pd.DataFrame()
+
+
+    # --- ÉTAPE 2 : CONNEXION & REQUÊTE ---
+    client = bigquery.Client(project=project_id, credentials=credentials)
+
+    try:
+        # Exécute la requête
+        query_job = client.query(query)
+        df = query_job.result().to_dataframe()
+        return df
+    except Exception as e:
+        st.error(f"🚨 Erreur BigQuery. Vérifiez votre requête SQL et les permissions: {e}")
+        return pd.DataFrame()
+
+
+# =========================================================
+# CONFIG & STYLE (Refonte V2)
+# =========================================================
+st.set_page_config(page_title="AI Planning Hub (Effectif Réel)", layout="wide", initial_sidebar_state="expanded")
+
+# --- AJOUT DE LA BANNIÈRE AVEC UNE LARGEUR RÉDUITE (600px) ---
+IMAGE_BANNER_PATH = r"G:\Drive partagés\DIRECTION WFM\WFM\Commun\Pulsar\banWFM1.png"
+
+try:
+    # Largeur réduite à 600 pixels
+    st.image(IMAGE_BANNER_PATH, width=300)
+except Exception:
+    st.warning("⚠️ Image bannière non trouvée ou chemin inaccessible. Assurez-vous que le chemin G:\\... est correct et accessible localement.")
+
+# --- FIN BANNIÈRE ---
+
+
+DATA_DIR = "data"; OUT_DIR = "out"
+os.makedirs(DATA_DIR, exist_ok=True); os.makedirs(OUT_DIR, exist_ok=True)
+STATE_FILE = os.path.join(OUT_DIR, "validation_state.json")
+
+# Style CSS V2 (Thème bleu marine/blanc)
+st.markdown("""
+<style>
+/* Arrière-plan plus sobre */
+.stApp {
+    background-color: #ffffff; /* Fond blanc propre */
+}
+/* Entêtes */
+h1, h2, h3, h4 {
+    color: #004c8c; /* Bleu foncé/Marine (Plus institutionnel) */
+    font-weight: 700;
+}
+/* Cartes d'information */
+div[data-testid="stMetric"] > div[data-testid="stMetricValue"] {
+    font-size: 1.8rem;
+    color: #007bff; /* Bleu vif conservé */
+}
+div[data-testid="stMetric"] > div[data-testid="stMetricLabel"] {
+    font-weight: 600;
+    color: #495057; /* Gris sombre */
+}
+/* Conteneurs principaux/cartes */
+.block-container {
+    padding-top: 12px !important;
+}
+.card {
+    background: #f8f9fa; /* Gris très clair pour les cartes */
+    padding: .75rem 1rem;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); /* Ombre légère */
+    border: 1px solid #e9ecef; /* Bordure très fine */
+}
+/* Messages d'information/notes */
+.note {
+    background:#e6f3ff; /* Bleu très clair */
+    color:#004c8c; /* Texte bleu marine */
+    padding:.6rem .8rem;
+    border-left:4px solid #004c8c; /* Barre bleu marine */
+    border-radius:.5rem;
+    margin-bottom:.5rem;
+    font-size: 0.9rem;
+}
+.stTabs [data-testid="stTab"] {
+    color: #004c8c; /* Bleu marine pour les titres d'onglets */
+    font-weight: 700;
+}
+/* Réduire la marge sous la bannière */
+div.css-1r6dm7m, div.css-1r6dm7m > img {
+    margin-bottom: -15px !important; /* Ajustement fin pour l'espace sous l'image */
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# HELPERS (Fonctions utilitaires)
+# ---------------------------------------------------------
+def read_any(path_or_file, sheet_name=None, dtype: Optional[Dict[str, type]] = None):
+    """Lit CSV/XLSX depuis chemin ou uploader Streamlit, avec support de sheet_name et dtype."""
+    if hasattr(path_or_file, "name"):
+        n = path_or_file.name.lower()
+        if n.endswith(".csv"):
+            return pd.read_csv(path_or_file, dtype=dtype)
+        if n.endswith((".xlsx",".xls")):
+            # Utilise dtype pour la lecture Excel
+            return pd.read_excel(path_or_file, sheet_name=sheet_name, engine="openpyxl", dtype=dtype)
+    else:
+        p = str(path_or_file).lower()
+        if p.endswith(".csv"):
+            return pd.read_csv(path_or_file, dtype=dtype)
+        if p.endswith((".xlsx",".xls")):
+            # Utilise dtype pour la lecture Excel
+            return pd.read_excel(path_or_file, sheet_name=sheet_name, engine="openpyxl", dtype=dtype)
+    raise ValueError("Format non supporté (CSV/XLSX)")
+
+def to_csv_bytes(df: pd.DataFrame) -> bytes:
+    """Export en CSV bytes avec BOM pour les accents."""
+    return df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+
+def guess_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    """Match tolérant pour deviner le nom de colonne (ID, Projet, OU...)."""
+    def _norm(s: str) -> str:
+        s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii")
+        s = s.lower()
+        for ch in [" ", "-", "_", "/", "\\", ":"]: s = s.replace(ch, "")
+        return s
+    norm_map = {_norm(c): c for c in df.columns}
+    for cand in candidates:
+        nc = _norm(cand)
+        if nc in norm_map: return norm_map[nc]
+    for key, real in norm_map.items():
+        for cand in candidates:
+            if _norm(cand) in key: return real
+    return None
+
+def initial_data_cleaning(df: pd.DataFrame) -> pd.DataFrame:
+    """Nettoyage initial: supprime lignes NaN, normalise les noms de colonnes."""
+    df = df.dropna(how='all')
+    new_cols = {}
+    for col in df.columns:
+        clean_col = str(col).strip()
+        clean_col = clean_col.replace('\n', ' ').replace('\r', '')
+        new_cols[col] = clean_col
+    df = df.rename(columns=new_cols)
+    return df.copy()
+
+# Initialisation de l'état de session
+if "df_eff" not in st.session_state: st.session_state["df_eff"] = pd.DataFrame()
+if "df_eff_filtered" not in st.session_state: st.session_state["df_eff_filtered"] = pd.DataFrame()
+if "df_cong" not in st.session_state: st.session_state["df_cong"] = pd.DataFrame()
+if "df_mapping" not in st.session_state: st.session_state["df_mapping"] = pd.DataFrame()
+if "s1_total" not in st.session_state: st.session_state["s1_total"] = 0.0
+if "s2_total" not in st.session_state: st.session_state["s2_total"] = 0.0
+if "kpis_data" not in st.session_state: st.session_state["kpis_data"] = pd.DataFrame()
+
+# ---------------------------------------------------------
+# SIDEBAR — chemins (Placeholder) ET INFO UTILISATEUR
+# ---------------------------------------------------------
+st.sidebar.title("Sources")
+default_g = r"G:\Drive partagés\DIRECTION WFM\WFM\Commun\Outil de travail\Modulation\Extractions"
+g_dir = st.sidebar.text_input("Dossier G: (Effectif & MyCongé)", value=default_g)
+st.sidebar.caption("Chemin d'accès principal pour les extractions.")
+
+st.sidebar.markdown("---") # Séparateur
+
+# --- AJOUT DE L'IDENTIFIANT WINDOWS ---
+try:
+    windows_id = os.environ.get('USERNAME')
+    if windows_id:
+        st.sidebar.info(f"👤 Utilisateur : **{windows_id}**")
+    else:
+        st.sidebar.warning("Nom d'utilisateur Windows non trouvé.")
+except Exception as e:
+    st.sidebar.error(f"Erreur d'accès à l'ID Windows : {e}")
+
+# ---------------------------------------------------------
+# TABS
+# ---------------------------------------------------------
+t0, tmap, t1, t2, t3, t4, t5, t6, tcapa = st.tabs([
+    "① Effectifs & Congés (Filtrage) 👥",
+    "② Mapping Planificateur ↔ Projet 🔗",
+    "③ Inputs Center 📥",
+    "④ Analyse 4 semaines 📊",
+    "⑤ Scénarios S1/S2 🧮",
+    "⑥ Validation ✅",
+    "⑦ Répartition 📤",
+    "⑧ Effectifs par OU/Projet 📋",
+    "⑨ Capacité Engagée vs Réelle ⚖️"
+])
+
+# =========================================================
+# ① EFFECTIFS & CONGÉS — FILTRAGE DES ABSENTS (SÉQUENCE 1)
+# =========================================================
+with t0:
+    st.header("📂 Étape 1 : Calcul de l'Effectif Réel Planifiable")
+
+    st.markdown("""
+        <div class='note'>
+            **Séquence :** Nettoyage ➡️ Garder les agents **NON** en congés ➡️ Effectif Réel.
+        </div>
+    """, unsafe_allow_html=True)
+
+    # 1. Lecture EFFECTIF (Feuille: The teams|Les équipes)
+    EFF_SHEET = "The teams|Les équipes"
+    eff_upload = st.file_uploader(f"Uploader Effectif Total (Feuille: **{EFF_SHEET}**)", type=["xlsx"], key="eff_upl_1")
+    df_eff = pd.DataFrame()
+    if eff_upload:
+        try:
+            # Deviner la colonne ID avant le chargement pour forcer le type string
+            df_eff_temp = pd.read_excel(eff_upload, sheet_name=EFF_SHEET, nrows=1, engine="openpyxl")
+            id_col_name = guess_col(df_eff_temp, ["Employee ID / Matricule", "Employee ID", "Matricule", "Employee ID(D)"])
+
+            # --- CORRECTION ERREUR M50246 ---
+            dtype_map = {id_col_name: str} if id_col_name else None
+
+            # Lecture finale avec type string forcé sur la colonne ID
+            df_eff = read_any(eff_upload, sheet_name=EFF_SHEET, dtype=dtype_map)
+            df_eff = initial_data_cleaning(df_eff) # Nettoyage
+            st.success(f"Effectif Total chargé et nettoyé: **{len(df_eff)}** lignes. (**Matricule ID forcé en texte**)")
+        except Exception as e:
+            st.error(f"Erreur lecture Effectif (Feuille: '{EFF_SHEET}'): {e}")
+
+    # 2. Lecture CONGÉS (Feuille: Détail par agent - Agent Detail)
+    CONG_SHEET = "Détail par agent - Agent Detail"
+    cong_upload = st.file_uploader(f"Uploader Congés (Feuille: **{CONG_SHEET}**)", type=["xlsx"], key="cong_upl_1")
+    df_cong = pd.DataFrame()
+    if cong_upload:
+        try:
+            # Deviner la colonne ID avant le chargement pour forcer le type string
+            df_cong_temp = pd.read_excel(cong_upload, sheet_name=CONG_SHEET, nrows=1, engine="openpyxl")
+            id_col_name_cong = guess_col(df_cong_temp, ["Matricule/ID", "Matricule", "Employee ID", "Matricule"])
+
+            # --- CORRECTION ERREUR M50246 ---
+            dtype_map_cong = {id_col_name_cong: str} if id_col_name_cong else None
+
+            # Lecture finale avec type string forcé sur la colonne ID
+            df_cong = read_any(cong_upload, sheet_name=CONG_SHEET, dtype=dtype_map_cong)
+            df_cong = initial_data_cleaning(df_cong) # Nettoyage
+            st.success(f"Détail Congés chargé et nettoyé: **{len(df_cong)}** lignes. (**Matricule ID forcé en texte**)")
+        except Exception as e:
+            st.error(f"Erreur lecture Congés (Feuille: '{CONG_SHEET}'): {e}")
+
+    st.session_state["df_eff"] = df_eff.copy()
+    df_eff_filtered = pd.DataFrame()
+
+    # --- Étape de Filtrage (Logique pour exclure les IDs en congés) ---
+    if not df_eff.empty and not df_cong.empty:
+        st.subheader("Résultats du Filtrage : Effectif Réel")
+
+        # Deviner les colonnes ID
+        id_eff_col = guess_col(df_eff, ["Employee ID / Matricule", "Employee ID", "Matricule", "Employee ID(D)"])
+        id_cong_col = guess_col(df_cong, ["Matricule/ID", "Matricule", "Employee ID", "Matricule"])
+
+        if not id_eff_col or not id_cong_col:
+            st.error("🚨 Impossible de trouver la colonne **Matricule/ID** dans l'un des fichiers.")
+        else:
+            st.info(f"IDs utilisés : Effectif **'{id_eff_col}'** | Congés **'{id_cong_col}'**")
+
+            # Agents à exclure
+            absent_ids = df_cong[id_cong_col].astype(str).str.strip().unique()
+            eff_ids = df_eff[id_eff_col].astype(str).str.strip()
+
+            # Filtrage: seuls les IDs NON trouvés dans la liste des congés sont conservés
+            mask_present = ~eff_ids.isin(absent_ids)
+            df_eff_filtered = df_eff[mask_present].copy()
+
+            # Affichage des résultats
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Effectif Total", len(df_eff))
+            with c2: st.metric("Agents Absents Filtrés", len(df_eff) - len(df_eff_filtered))
+            with c3: st.metric("**Effectif Réel Planifiable**", len(df_eff_filtered))
+
+            st.session_state["df_eff_filtered"] = df_eff_filtered.copy()
+
+            with st.expander("Aperçu de l'Effectif Réel Filtré"):
+                st.dataframe(df_eff_filtered.head(50), use_container_width=True)
+
+        # === Résumé : nombre d'agents par Projet & OU/UO (sur l'effectif réel filtré) ===
+        ou_eff_col = guess_col(df_eff_filtered, ["OU/UO", "UO/OU", "OU", "UO"])
+        proj_eff_col = guess_col(df_eff_filtered, ["Project/Projet", "Projects/Projets", "Project", "Projet"])
+        id_eff_col2 = guess_col(
+            df_eff_filtered,
+            ["Employee ID / Matricule", "Employee ID", "Matricule", "Employee ID(D)"]
         )
-        results_df = pd.concat([results_df, original_data.reset_index(drop=True)], axis=1)
-        timestamp = datetime.now().strftime("%H_%M_%S_%d_%m_%Y")
-        filename = r"C:\Users\dell\Downloads\HIMA_prediction_" + timestamp + ".csv"
-        results_df.to_csv(filename, index=False, sep=',', encoding='utf-8')
-        st.success(f"Results saved successfully as {filename}.")
-        return results_df.to_csv(index=False, sep=',', decimal=",", encoding='utf-8')
-
-    def train_model(self, X_train, y_train, model_type, trial=None):
-        model_type_lower = model_type.lower()
-        ML_MODELS = ['adaboost', 'catboost', 'huber', 'svr', 'ensemble', 'elasticnet']
-
-        if model_type_lower in ML_MODELS:
-            X_train_reshaped = X_train.reshape(X_train.shape[0], -1)
-
-            def objective_optuna(trial):
-                if model_type_lower == 'adaboost':
-                    from sklearn.ensemble import AdaBoostRegressor
-                    n_estimators = trial.suggest_categorical('n_estimators', [50, 200])
-                    learning_rate = trial.suggest_categorical('learning_rate', [0.005, 0.001])
-                    loss = trial.suggest_categorical('loss', ['linear', 'square', 'exponential'])
-                    base_model = AdaBoostRegressor(
-                        n_estimators=n_estimators,
-                        learning_rate=learning_rate,
-                        loss=loss,
-                        random_state=42
-                    )
-
-                elif model_type_lower == 'catboost':
-                    iterations = trial.suggest_categorical('iterations', [100, 200])
-                    depth = trial.suggest_categorical('depth', [8, 10, 12])
-                    learning_rate = trial.suggest_categorical('learning_rate', [0.001, 0.01])
-                    l2_leaf_reg = trial.suggest_categorical('l2_leaf_reg', [1, 3, 5, 40])
-                    subsample = trial.suggest_categorical('subsample', [0.7, 0.8, 0.9, 1.0])
-                    base_model = cb.CatBoostRegressor(
-                        iterations=iterations,
-                        depth=depth,
-                        learning_rate=learning_rate,
-                        l2_leaf_reg=l2_leaf_reg,
-                        subsample=subsample,
-                        silent=True,
-                        random_state=42
-                    )
-
-                elif model_type_lower == 'huber':
-                    epsilon = trial.suggest_categorical('epsilon', [1.35, 1.5, 1.75])
-                    alpha = trial.suggest_categorical('alpha', [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0])
-                    base_model = HuberRegressor(
-                        epsilon=epsilon,
-                        alpha=alpha
-                    )
-
-                elif model_type_lower == 'svr':
-                    C = trial.suggest_categorical('C', [0.5, 1.0, 2.0])
-                    epsilon = trial.suggest_categorical('epsilon', [0.05, 0.1, 0.2])
-                    gamma = trial.suggest_categorical('gamma', [0.1, 0.01, 0.001])
-                    kernel = trial.suggest_categorical('kernel', ['linear', 'poly', 'rbf', 'sigmoid'])
-                    base_model = SVR(
-                        C=C,
-                        epsilon=epsilon,
-                        gamma=gamma,
-                        kernel=kernel
-                    )
-
-                elif model_type_lower == 'elasticnet':
-                    alpha = trial.suggest_categorical('alpha', [0.0001, 0.001, 0.01, 0.1, 1, 10, 100])
-                    l1_ratio = trial.suggest_categorical('l1_ratio', [0.1, 0.3, 0.5, 0.7, 0.9, 1.0])
-                    base_model = ElasticNet(
-                        alpha=alpha,
-                        l1_ratio=l1_ratio,
-                        random_state=42
-                    )
-
-                elif model_type_lower == 'ensemble':
-                    weights = trial.suggest_categorical('weights', [[1,1,1], [2,1,1], [1,2,2]])
-                    base_model = VotingRegressor(
-                        estimators=[
-
-                            ('huber', HuberRegressor(epsilon=1.35, alpha=0.0001)),
-                            ('elasticnet', ElasticNet(alpha=1.0, l1_ratio=0.5, random_state=42)),
-                            ('mlp', MLPRegressor(hidden_layer_sizes=(128,64,32), max_iter=500, activation='relu', early_stopping=True, solver='adam', random_state=42))
-                        ],
-                        weights=weights,
-                        n_jobs=-1
-                    )
-
-                elif model_type_lower == 'lightgbm':
-                    num_leaves = trial.suggest_categorical('num_leaves', [31, 50])
-                    n_estimators = trial.suggest_categorical('n_estimators', [100, 240, 300])
-                    learning_rate = trial.suggest_categorical('learning_rate', [0.0001, 0.005, 0.01])
-                    base_model = lgb.LGBMRegressor(
-                        random_state=28,
-                        num_leaves=num_leaves,
-                        n_estimators=n_estimators,
-                        learning_rate=learning_rate
-                    )
-
-                cv = TimeSeriesSplit(n_splits=8)
-                mae_list = []
-                for train_idx, val_idx in cv.split(X_train_reshaped):
-                    X_tr, X_val = X_train_reshaped[train_idx], X_train_reshaped[val_idx]
-                    y_tr, y_val = y_train[train_idx], y_train[val_idx]
-                    base_model.fit(X_tr, y_tr)
-                    y_pred = base_model.predict(X_val)
-                    mae_list.append(mean_absolute_error(y_val, y_pred))
-
-                return np.mean(mae_list)
-
-            study = optuna.create_study(direction='minimize')
-            study.optimize(objective_optuna, n_trials=20)
-
-            best_params = study.best_params
-            st.write(f"Best parameters for {model_type_lower} via Optuna: {best_params}")
-
-            if model_type_lower == 'adaboost':
-                final_model = AdaBoostRegressor(
-                    n_estimators=best_params['n_estimators'],
-                    learning_rate=best_params['learning_rate'],
-                    loss=best_params['loss'],
-                    random_state=42
-                )
-
-            elif model_type_lower == 'huber':
-                final_model = HuberRegressor(
-                    epsilon=best_params['epsilon'],
-                    alpha=best_params['alpha']
-                )
-            elif model_type_lower == 'svr':
-                final_model = SVR(
-                    C=best_params['C'],
-                    epsilon=best_params['epsilon'],
-                    gamma=best_params['gamma'],
-                    kernel=best_params['kernel']
-                )
-            elif model_type_lower == 'elasticnet':
-                final_model = ElasticNet(
-                    alpha=best_params['alpha'],
-                    l1_ratio=best_params['l1_ratio'],
-                    random_state=42
-                )
-            elif model_type_lower == 'ensemble':
-                final_model = VotingRegressor(
-                    estimators=[
-                        ('elasticnet', ElasticNet(alpha=best_params.get('alpha_elasticnet', 1.0),l1_ratio=best_params.get('l1_ratio', 0.0001),random_state=42)),
-                        ('huber', HuberRegressor(epsilon=1.35, alpha=0.0001)),
-                        ('mlp', MLPRegressor(hidden_layer_sizes=(128,64,32), max_iter=500, activation='relu', early_stopping=True, solver='adam', random_state=42))
-                    ],
-                    weights=best_params['weights'],
-                    n_jobs=-1
-                )
-            elif model_type_lower == 'lightgbm':
-                final_model = lgb.LGBMRegressor(
-                    random_state=42,
-                    num_leaves=best_params['num_leaves'],
-                    n_estimators=best_params['n_estimators'],
-                    learning_rate=best_params['learning_rate']
-                )
-
-            final_model.fit(X_train_reshaped, y_train)
-            return final_model
-
-        elif model_type_lower == 'ttm':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import LeakyReLU
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import Adam
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
-            model = Sequential()
-            model.add(Dense(1024, input_shape=(X_train.shape[1],)))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.3))
-            model.add(Dense(1000))
-            model.add(LeakyReLU(alpha=0.3))
-            model.add(Dropout(0.2))
-            model.add(Dense(512))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.2))
-            model.add(Dense(328))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.2))
-            model.add(Dense(328))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.2))
-            model.add(Dense(400))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.3))
-            model.add(Dense(350))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Dropout(0.3))
-            model.add(Dense(1, activation='linear'))
-            optimizer = Adam(learning_rate=0.0005, weight_decay=1e-5)
-            model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
-            st.write("📊 **Résumé du modèle TTM :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=5, min_lr=1e-6, verbose=2)
-            lr_logger = LearningRateLogger()
-            model.fit(X_train, y_train, epochs=200, batch_size=8, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
-            st.write("Modèle TTM entraîné.")
-            return model
-        elif model_type_lower == 'llama':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
-            model = Sequential()
-            model.add(Dense(512, input_shape=(X_train.shape[1],), activation='swish', kernel_regularizer=l2(0.0005)))
-            model.add(Dropout(0.3))
-            model.add(Dense(256, activation='swish', kernel_regularizer=l2(0.0005)))
-            model.add(Dropout(0.2))
-            model.add(Dense(128, activation='swish', kernel_regularizer=l2(0.0005)))
-            model.add(Dropout(0.2))
-            model.add(Dense(1, activation='linear'))
-            optimizer = AdamW(learning_rate=0.0002, weight_decay=1e-5)
-            model.compile(optimizer=optimizer, loss='huber', metrics=['mse'])
-            st.write("📊 **Résumé du modèle LLAMA (Optimisé) :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='loss', patience=15, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=5, min_lr=1e-6, verbose=2)
-            lr_logger = LearningRateLogger()
-            model.fit(X_train, y_train, epochs=200, batch_size=8, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
-            return model
-        elif model_type_lower == 'timexer':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import Adam
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
-            model = Sequential()
-            model.add(Dense(512, input_shape=(X_train.shape[1],), activation='relu'))
-            model.add(Dropout(0.2))
-            model.add(Dense(256, activation='relu'))
-            model.add(Dropout(0.3))
-            model.add(Dense(128, activation='relu'))
-            model.add(Dropout(0.3))
-            model.add(Dense(64, activation='relu'))
-            model.add(Dropout(0.2))
-            model.add(Dense(1, activation='linear'))
-            optimizer = Adam(learning_rate=0.0001, weight_decay=1e-5)
-            model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
-            st.write("📊 **Résumé du modèle Timexer :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=2)
-            model.fit(X_train, y_train, epochs=350, batch_size=8,  callbacks=[early_stop], verbose=2)
-            st.write("Modèle Timexer entraîné.")
-            return model
-        elif model_type_lower == 'nhits':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.regularizers import l2
-            from tensorflow.keras.layers import BatchNormalization, Dense, Dropout
-            from tensorflow.keras.optimizers import Adam
-            from tensorflow.keras.callbacks import EarlyStopping, LearningRateScheduler
-            model = Sequential()
-            model.add(Dense(1024, input_shape=(X_train.shape[1],), activation='swish'))
-            model.add(Dropout(0.3))
-            model.add(Dense(512, activation='swish'))
-            model.add(Dropout(0.2))
-            model.add(Dense(256, activation='swish'))
-            model.add(Dropout(0.2))
-            model.add(Dense(128, activation='swish'))
-            model.add(Dropout(0.1))
-            model.add(Dense(64, activation='swish'))
-            model.add(Dropout(0.2))
-            model.add(Dense(1, activation='linear'))
-            optimizer = Adam(learning_rate=0.0001, amsgrad=True)
-            model.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
-            def scheduler(epoch, lr):
-                return lr * 0.95 if epoch > 10 else lr
-            early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=3)
-            lr_scheduler = LearningRateScheduler(scheduler)
-            model.fit(X_train, y_train, epochs=400, batch_size=16, validation_split=0.1,callbacks=[early_stop, lr_scheduler], verbose=2)
-            st.write("✅ Modèle NHITS (Optimisé) entraîné.")
-            return model
-
-
-        elif model_type_lower == 'softs':
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import LeakyReLU
-            from tensorflow.keras.layers import Dense, Dropout, Conv1D, Flatten, BatchNormalization
-            from tensorflow.keras.optimizers import AdamW
-            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-            from tensorflow.keras.regularizers import l2
-            model = Sequential()
-            model.add(Dense(512, input_shape=(X_train.shape[1],), kernel_regularizer=l2(0.01)))
-            model.add(Dropout(0.3))
-
-            model.add(Dense(256, kernel_regularizer=l2(0.01)))
-
-            model.add(Dropout(0.2))
-
-
-            model.add(Dropout(0.1))
-            model.add(Dense(64))
-
-            model.add(Dropout(0.1))
-            model.add(Dense(32))
-
-            model.add(Dense(16))
-
-            model.add(Dropout(0.1))
-            model.add(Dense(1, activation='linear'))
-            optimizer = AdamW(learning_rate=0.0001, weight_decay=1e-5)
-            model.compile(optimizer=optimizer, loss='huber', metrics=['mse'])
-            st.write("📊 **Résumé du modèle softs :**")
-            st.text(model.summary())
-            early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=2)
-            reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.1, patience=5, min_lr=1e-6, verbose=2)
-            lr_logger = LearningRateLogger()
-            st.write(f"Training Optimized SOFTS: Learning rate: {optimizer.learning_rate.numpy()}")
-            model.fit(X_train, y_train, epochs=200, batch_size=12, callbacks=[early_stop, reduce_lr, lr_logger], verbose=2)
-            return model
-
-
-
-    def predict_future(self, model, data_scaled, scaler, start_date, end_date, holidays_list,
-                       holiday_weights, outlier_dates, predict_holidays_as_zero,
-                       predict_weekends_as_zero, predict_saturday_as_zero, predict_sunday_as_zero,
-                       working_hours, model_type, weekday_weights, percentage_reduction=None):
-        if self.prediction_type == 'tranche':
-            future_dates = []
-            current_date = start_date
-            while current_date <= end_date:
-                base_time = datetime.combine(current_date, datetime.min.time()) + timedelta(hours=working_hours[0])
-                intervals = (working_hours[1] - working_hours[0]) * 4
-                for i in range(intervals):
-                    future_dates.append(base_time + timedelta(minutes=15 * i))
-                current_date += timedelta(days=1)
-            future_dates = pd.to_datetime(future_dates)
+        if ou_eff_col and proj_eff_col and id_eff_col2:
+            df_tmp = df_eff_filtered.copy()
+            # normaliser les IDs pour éviter les doublons (espaces, etc.)
+            df_tmp[id_eff_col2] = df_tmp[id_eff_col2].astype(str).str.strip()
+            nb_par_ou = (
+                df_tmp
+                .groupby([proj_eff_col, ou_eff_col])[id_eff_col2]
+                .nunique()
+                .reset_index(name="Nb Agents (ID uniques)")
+                .sort_values("Nb Agents (ID uniques)", ascending=False)
+            )
+            with st.expander("Résumé : Nb d'agents par Projet & OU/UO (Effectif Réel)"):
+                st.dataframe(nb_par_ou, use_container_width=True)
         else:
-            future_dates = pd.date_range(start=start_date, end=end_date, freq='D')
-        future_predictions = []
-        reduction_factor = 1 - (percentage_reduction / 100) if percentage_reduction is not None else 1
-        model_type_lower = model_type.lower()
-        holiday_dates = [pd.to_datetime(h).date() for h in st.session_state.holidays]
-        outlier_dates_set = [pd.to_datetime(o).date() for o in st.session_state.outliers]
+            st.info("Colonnes Projet / OU/UO / ID non trouvées pour le résumé par UO.")
 
-        def force_zero(pred, d):
-            if st.session_state.predict_saturday_as_zero and d.weekday() == 5:
-                return 0
-            if st.session_state.predict_sunday_as_zero and d.weekday() == 6:
-                return 0
-            if st.session_state.predict_weekends_as_zero and d.weekday() >= 5:
-                return 0
-            if st.session_state.predict_holidays_as_zero and d.date() in holiday_dates:
-                return 0
-            if d.date() in outlier_dates_set:
-                return 0
-            return pred
+    # Fallback
+    if st.session_state["df_eff_filtered"].empty and not df_eff.empty:
+        st.info("L'Effectif Total non filtré sera utilisé pour le mapping faute de données de congés.")
+        st.session_state["df_eff_filtered"] = df_eff.copy()
 
-        if model_type_lower in ['arrima', 'sarima']:
-            n_steps = len(future_dates)
-            forecast = model.forecast(steps=n_steps)
-            for i, f_date in enumerate(future_dates):
-                weight = weekday_weights.get(f_date.weekday(), 1)
-                holiday_weight = 1
-                if f_date.date() in holiday_dates:
-                    for h in st.session_state.holidays:
-                        if pd.to_datetime(h).date() == f_date.date():
-                            holiday_weight = st.session_state.holiday_weights[st.session_state.holidays.index(h)] / 100
-                            break
-                prediction = forecast[i] * reduction_factor
-                prediction_rescaled = scaler.inverse_transform(np.array([[prediction]]))[0, 0]
-                final_pred = force_zero(prediction_rescaled, f_date)
-                final_pred = max(0, final_pred) * weight * holiday_weight
-                future_predictions.append(final_pred)
-            for idx, d in enumerate(future_dates):
-                if st.session_state.predict_saturday_as_zero and d.weekday() == 5:
-                    future_predictions[idx] = 0
-                if st.session_state.predict_sunday_as_zero and d.weekday() == 6:
-                    future_predictions[idx] = 0
-                if st.session_state.predict_weekends_as_zero and d.weekday() >= 5:
-                    future_predictions[idx] = 0
-                if st.session_state.predict_holidays_as_zero and d.date() in holiday_dates:
-                    future_predictions[idx] = 0
-            return future_dates, future_predictions
-        else:
-            last_sequence = data_scaled[-self.seq_length:]
-            for f_date in future_dates:
-                weight = weekday_weights.get(f_date.weekday(), 1)
-                holiday_weight = 1
-                if f_date.date() in holiday_dates:
-                    for h in st.session_state.holidays:
-                        if pd.to_datetime(h).date() == f_date.date():
-                            holiday_weight = st.session_state.holiday_weights[st.session_state.holidays.index(h)] / 100
-                            break
-                if force_zero(1, f_date) == 0:
-                    prediction = np.array([0])
+# ---------------------------------------------------------
+# ② MAPPING Planificateur → Projet (SÉQUENCE 2 : CALCUL)
+# ---------------------------------------------------------
+with tmap:
+    st.header("🔗 Étape 2 : Croisement et Comptage par OU/UO")
+    # UTILISE L'EFFECTIF FILTRÉ DE L'ÉTAPE 1
+    df_eff_used  = st.session_state.get("df_eff_filtered",  pd.DataFrame())
+    if df_eff_used.empty:
+        st.error("🚨 Effectif Réel non disponible. Veuillez le charger dans l'onglet ①.")
+        st.stop()
+    # --- Chargement Mapping (inchangé) ---
+    map_default = r"G:\Drive partagés\DIRECTION WFM\WFM\Prév&Stats\upload_extractions\Mapping\mapping_planif\fichier_mapping_planif_V2.xlsx"
+    map_path = st.text_input("Chemin mapping (Planificateur ↔ Projet/File)", value=map_default, key="map_path_input")
+    mdf = st.session_state.get("df_mapping", pd.DataFrame())
+    # Bouton de chargement (simple)
+    if st.button("Charger/Rafraîchir Mapping", key="refresh_map_btn"):
+        try:
+            mxls = pd.ExcelFile(map_path)
+            m_sheet = st.selectbox("Feuille du mapping", options=mxls.sheet_names, index=0, key="map_sheet_select_reload")
+            mdf_raw = pd.read_excel(map_path, sheet_name=m_sheet, engine="openpyxl")
+            planif_col = guess_col(mdf_raw, ["Planificateur","Planner","Planif"]) or mdf_raw.columns[0]
+            map_proj   = guess_col(mdf_raw, ["Projet","Project"]) or (mdf_raw.columns[1] if len(mdf_raw.columns)>1 else mdf_raw.columns[0])
+            map_file   = guess_col(mdf_raw, ["File","Files","Fichier"])
+            rename_map = {planif_col:"Planificateur", map_proj:"Projet"}
+            keep = ["Planificateur","Projet"]
+            if map_file: rename_map[map_file] = "File"; keep.append("File")
+            mdf = mdf_raw.rename(columns=rename_map)[keep].copy()
+            for c in keep: mdf[c] = mdf[c].astype(str).str.strip()
+            st.session_state["df_mapping"] = mdf
+            st.session_state["last_map_path"] = map_path
+        except Exception as e:
+            st.error(f"Erreur lecture Mapping : {e}")
+    if mdf.empty: st.warning("Veuillez charger le fichier de mapping ci-dessus."); st.stop()
+    # --- Sélection Planificateur ---
+    st.markdown("---")
+    planifs = sorted(mdf["Planificateur"].dropna().unique().tolist())
+    selected_plan = st.selectbox("Sélectionner un Planificateur", options=planifs, key="planif_select_map")
+    plan_map = mdf[mdf["Planificateur"] == selected_plan]
+    # 1. Normalisation des critères du Mapping (Projet/File) en majuscules
+    projects_set = {p.strip().upper() for p in plan_map["Projet"].dropna().astype(str)}
+    files_set = {f.strip().upper() for f in plan_map["File"].dropna().astype(str)} if "File" in plan_map.columns else set()
+    col_info1, col_info2 = st.columns(2)
+    with col_info1: st.info(f"**Projets ({len(projects_set)})** : {', '.join(sorted(projects_set)[:5])}... (pour **{selected_plan}**)")
+    if files_set:
+        with col_info2: st.info(f"**Files (OU/UO - {len(files_set)})** : {', '.join(sorted(files_set)[:5])}... (pour **{selected_plan}**)")
+    # Détection des colonnes Effectif
+    proj_col = guess_col(df_eff_used, ["Project/Projet","Projects/Projets","Project","Projet"]) or df_eff_used.columns[0]
+    ou_col   = guess_col(df_eff_used, ["OU/UO","UO/OU","OU","UO"]) or (df_eff_used.columns[1] if len(df_eff_used.columns)>1 else df_eff_used.columns[0])
+    team_col = guess_col(df_eff_used, ["Team/Equipe","Equipe","Team"]) or (df_eff_used.columns[2] if len(df_eff_used.columns)>2 else df_eff_used.columns[0])
+    st.markdown("---")
+    # --- NOUVELLE OPTION DE FILTRAGE ---
+    filter_mode = st.radio(
+        "Mode de Filtrage (si le croisement échoue à 0)",
+        ("Projet ET File (OU/UO)", "Projet SEULEMENT (pour debug OU si Mapping File est faux)"),
+        index=0,
+        key="filter_mode_select"
+    )
+    # --- Croisement avec Normalisation (Rend le matching insensible à la casse) ---
+    # Colonnes Effectif nettoyées
+    proj_stripped = df_eff_used[proj_col].fillna("").astype(str).str.strip()
+    ou_stripped   = df_eff_used[ou_col].fillna("").astype(str).str.strip()
+    # Colonnes Effectif en majuscules (pour le matching)
+    proj_upper = proj_stripped.str.upper()
+    ou_upper   = ou_stripped.str.upper()
+    # Application des masques (matching insensible à la casse)
+    mask_proj = proj_upper.isin(projects_set)
+    mask_file = ou_upper.isin(files_set)
+    # DÉCISION DU MASQUE FINAL BASÉE SUR L'OPTION CHOISIE
+    if files_set and filter_mode == "Projet ET File (OU/UO)":
+        mask_both = mask_proj & mask_file
+        st.warning("⚠️ Attention: Si 'Lignes correspondant' est à 0, vous êtes probablement confronté à l'incohérence de nom (ex: MA- vs WA-) et devriez changer le mode de filtrage.")
+    else:
+        # Utilise le match Projet seulement (CONTOURNEMENT DU PROBLÈME MA-/WA-)
+        mask_both = mask_proj
+        st.info("ℹ️ Filtrage effectué uniquement par **Projet**. Le comptage par OU/UO sera affiché pour tous les agents de ce Projet.")
+    filtered_both = df_eff_used.loc[mask_both].copy()
+    # Affichage des métriques de matching
+    st.subheader("Résultats du Croisement sur Effectif Réel")
+    c_proj, c_file, c_final = st.columns(3)
+    c_proj.metric("Lignes match Projet", int(mask_proj.sum()))
+    c_file.metric("Lignes match File (OU/UO)", int(mask_file.sum()))
+    c_final.metric("**Lignes correspondant (Final)**", len(filtered_both))
+    if filtered_both.empty:
+        st.warning("Aucun agent de l'effectif réel ne correspond à ce Planificateur après filtrage.")
+        st.stop()
+    # --- Étape Finale : Comptage TOTAL par Projet et OU/UO (VOTRE REQUÊTE) ---
+    # Assigner les colonnes d'origine au DataFrame filtré (pour un affichage propre)
+    filtered_both[ou_col] = ou_stripped[filtered_both.index]
+    filtered_both[proj_col] = proj_stripped[filtered_both.index]
+    # Comptage par Projet ET OU/UO
+    total_par_ou = (
+        filtered_both
+        .groupby([proj_col, ou_col]).size().reset_index(name="Total Agents")
+        .sort_values("Total Agents", ascending=False)
+    )
+    st.subheader("Total Agents Réels Planifiables par Projet et Unité Opérationnelle (OU/UO) 📊")
+    st.dataframe(total_par_ou, use_container_width=True)
+    # Export des totaux par OU/UO
+    st.download_button(
+        "💾 Export Total Agents par Projet et OU/UO (CSV)",
+        data=to_csv_bytes(total_par_ou),
+        file_name=f"total_agents_par_ou_projet_{selected_plan}.csv",
+        mime="text/csv"
+    )
+    # Détail par Team/Equipe (facultatif)
+    if team_col in filtered_both.columns:
+        grp = (
+            filtered_both
+            .groupby([proj_col, ou_col, team_col]).size().reset_index(name="Nombre")
+            .sort_values([ou_col, "Nombre"], ascending=[True, False])
+        )
+        with st.expander("Détail du Comptage par Team/Équipe"):
+            st.dataframe(grp, use_container_width=True)
+
+# ---------------------------------------------------------
+# ⑧ EFFECTIFS PAR OU/PROJET - VUE GLOBALE
+# ---------------------------------------------------------
+with t6:
+    st.header("📋 Effectifs par OU/UO et Projet - Vue Globale")
+    st.markdown("""
+    <div class='note'>
+        Cette vue affiche pour <strong>chaque UO/OU le nombre d'agents affectés</strong> et le <strong>projet auquel ils appartiennent</strong>,
+        sur la base de l'effectif réel planifiable (après exclusion des congés).
+    </div>
+    """, unsafe_allow_html=True)
+    # Utiliser l'effectif filtré de la session
+    df_eff_global = st.session_state.get("df_eff_filtered", pd.DataFrame())
+    if df_eff_global.empty:
+        st.warning("⚠️ Veuillez d'abord charger et filtrer les effectifs dans l'onglet '① Effectifs & Congés'")
+        st.stop()
+    # Détection des colonnes
+    proj_col_global = guess_col(df_eff_global, ["Project/Projet","Projects/Projets","Project","Projet"])
+    ou_col_global = guess_col(df_eff_global, ["OU/UO","UO/OU","OU","UO"])
+    if not proj_col_global or not ou_col_global:
+        st.error("🚨 Impossible de détecter les colonnes 'Projet' et 'OU/UO' dans le fichier d'effectif")
+        st.info("Colonnes disponibles : " + ", ".join(df_eff_global.columns.tolist()))
+        st.stop()
+    st.success(f"✅ Colonnes détectées : **{proj_col_global}** (Projet) et **{ou_col_global}** (OU/UO)")
+    # Calcul des effectifs par OU et Projet
+    effectifs_par_ou_projet = (
+        df_eff_global
+        .groupby([ou_col_global, proj_col_global])
+        .size()
+        .reset_index(name="Nombre d'Agents")
+        .sort_values([ou_col_global, "Nombre d'Agents"], ascending=[True, False])
+    )
+    # Statistiques globales
+    total_agents = len(df_eff_global)
+    total_ous = effectifs_par_ou_projet[ou_col_global].nunique()
+    total_projets = effectifs_par_ou_projet[proj_col_global].nunique()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Agents Planifiables", total_agents)
+    with col2:
+        st.metric("Nombre d'OU/UO", total_ous)
+    with col3:
+        st.metric("Nombre de Projets", total_projets)
+    st.markdown("---")
+    # Affichage du tableau principal
+    st.subheader("📊 Répartition des Effectifs par OU/UO et Projet")
+    st.dataframe(effectifs_par_ou_projet, use_container_width=True)
+    # Vue agrégée par OU seulement
+    st.subheader("🧮 Total Agents par OU/UO")
+    effectifs_par_ou = (
+        effectifs_par_ou_projet
+        .groupby(ou_col_global)["Nombre d'Agents"]
+        .sum()
+        .reset_index()
+        .sort_values("Nombre d'Agents", ascending=False)
+    )
+    st.dataframe(effectifs_par_ou, use_container_width=True)
+    # Vue agrégée par Projet seulement
+    st.subheader("🏢 Total Agents par Projet")
+    effectifs_par_projet = (
+        effectifs_par_ou_projet
+        .groupby(proj_col_global)["Nombre d'Agents"]
+        .sum()
+        .reset_index()
+        .sort_values("Nombre d'Agents", ascending=False)
+    )
+    st.dataframe(effectifs_par_projet, use_container_width=True)
+    # Export des données
+    st.markdown("---")
+    st.subheader("💾 Export des Données")
+    col_exp1, col_exp2, col_exp3 = st.columns(3)
+    with col_exp1:
+        st.download_button(
+            "Télécharger Effectifs par OU/Projet (CSV)",
+            data=to_csv_bytes(effectifs_par_ou_projet),
+            file_name="effectifs_par_ou_et_projet.csv",
+            mime="text/csv"
+        )
+    with col_exp2:
+        st.download_button(
+            "Télécharger Total par OU (CSV)",
+            data=to_csv_bytes(effectifs_par_ou),
+            file_name="total_agents_par_ou.csv",
+            mime="text/csv"
+        )
+    with col_exp3:
+        st.download_button(
+            "Télécharger Total par Projet (CSV)",
+            data=to_csv_bytes(effectifs_par_projet),
+            file_name="total_agents_par_projet.csv",
+            mime="text/csv"
+        )
+    # Visualisations
+    st.markdown("---")
+    st.subheader("📈 Visualisations")
+    viz_col1, viz_col2 = st.columns(2)
+    with viz_col1:
+        st.bar_chart(effectifs_par_ou.set_index(ou_col_global)["Nombre d'Agents"].head(10))
+        st.caption("Top 10 des OU/UO par effectif")
+    with viz_col2:
+        st.bar_chart(effectifs_par_projet.set_index(proj_col_global)["Nombre d'Agents"].head(10))
+        st.caption("Top 10 des projets par effectif")
+
+# =========================================================
+# ⑨ COMPARAISON CAPACITÉ (ENGAGÉE VS RÉELLE)
+# =========================================================
+with tcapa:
+    st.header("⚖️ Comparaison Capacité : Engagée vs Réelle (API BQ)")
+
+    col_intro1, col_intro2 = st.columns([0.7, 0.3])
+    with col_intro1:
+        st.markdown("""
+            <div class='note'>
+                La Capacité **Engagée** est chargée manuellement (MyCapa - Upload).
+                La Capacité **Réelle** est chargée en direct depuis **BigQuery** (API BQ).
+                **⚠️ N'oubliez pas d'ajuster** le nom de la table et des colonnes dans la requête SQL ci-dessous.
+            </div>
+        """, unsafe_allow_html=True)
+    with col_intro2:
+        # --- LIEN VERS MYCAPA (Raccourci) ---
+        st.link_button("🔗 Accès MyCapa.Intelcia", url="https://mycapa.intelcia.com/#/clients", help="Cliquez pour accéder directement à l'outil MyCapa.")
+
+    # --- Configuration BigQuery (VOTRE PROJECT_ID) ---
+    BQ_PROJECT_ID = "dda-dpl-wfm-prd-hf"
+
+    # --- REQUÊTE CAPACITÉ RÉELLE (À ADAPTER) ---
+    BQ_CAPA_QUERY = f"""
+        SELECT
+            CAST(T1.Project_Name AS STRING) AS Projet,
+            SUM(T1.Metric_Capacite) AS Capacité_Réelle
+        FROM
+            -- ⚠️ MODIFIEZ CECI : `dda-dpl-wfm-prd-hf.votre_dataset_gold.votre_table_kpis`
+            `{BQ_PROJECT_ID}.votre_dataset_gold.votre_table_kpis` AS T1
+        WHERE
+            T1.Date_Reference = CURRENT_DATE() -- Adaptez la logique de date si nécessaire
+        GROUP BY 1
+    """
+
+    st.markdown("### ⚙️ Requête SQL BigQuery (Capacité Réelle)")
+    st.code(BQ_CAPA_QUERY, language="sql")
+
+    c0_1, c0_2 = st.columns([3, 1])
+    with c0_2:
+        st.caption(f"Projet BQ : **{BQ_PROJECT_ID}**")
+        if st.button("🔌 Exécuter Requête BigQuery", help="Déclenche la requête BQ et rafraîchit les données", key="refresh_capa_bq"):
+            st.session_state["refresh_bq_capa"] = time.time() # Déclenche le refresh
+
+    # ----------------------------------------------------
+    # 1. Capacité Engagée (MyCapa - UPLOAD)
+    # ----------------------------------------------------
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("1️⃣ Capacité Engagée (MyCapa - Upload) 🤝")
+        capa_engagee_upload = st.file_uploader("Uploader Capacité Engagée (CSV/XLSX)", type=["xlsx", "csv"], key="capa_eng_upl")
+        df_eng = pd.DataFrame()
+
+        PROJ_COLS = ["Projet", "Project", "Project/Projet"]
+        CAPA_COLS = ["Effectif", "Capacité", "Volume", "Nb Agents"]
+
+        if capa_engagee_upload:
+            try:
+                df_eng = read_any(capa_engagee_upload).copy()
+                df_eng = initial_data_cleaning(df_eng)
+                proj_col_eng = guess_col(df_eng, PROJ_COLS)
+                capa_col_eng = guess_col(df_eng, CAPA_COLS)
+
+                if proj_col_eng and capa_col_eng:
+                    df_eng = df_eng.rename(columns={proj_col_eng: "Projet", capa_col_eng: "Capacité Engagée"})
+                    df_eng["Projet"] = df_eng["Projet"].astype(str).str.strip().str.upper()
+                    df_eng["Capacité Engagée"] = pd.to_numeric(df_eng["Capacité Engagée"], errors='coerce').fillna(0) # Nettoyage numérique
+                    df_eng = df_eng[["Projet", "Capacité Engagée"]].groupby("Projet").sum().reset_index()
+                    st.success(f"Capacité Engagée chargée pour {len(df_eng)} projets.")
                 else:
-                    ml_models = ['ensemble', 'svr', 'adaboost', 'huber', 'ridge', 'elasticnet']
-                    nn_models = [ 'nhits','llama','ttm','softs','nbeats','timexer']
-                    if model_type_lower in ml_models:
-                        prediction = model.predict(last_sequence.reshape(1, -1))
-                    elif model_type_lower in nn_models:
-                        prediction = model.predict(last_sequence.reshape(1, self.seq_length, 1))
-                    else:
-                        prediction = model.predict(last_sequence.reshape(1, -1))
-                    if prediction.ndim == 1:
-                        prediction = prediction.reshape(-1, 1)
-                    prediction *= reduction_factor
-                    last_sequence = np.append(last_sequence[1:], prediction, axis=0).reshape(self.seq_length, 1)
-                prediction_rescaled = scaler.inverse_transform(prediction.reshape(-1, 1)).flatten()[0]
-                final_pred = force_zero(prediction_rescaled, f_date)
-                final_pred = max(0, final_pred) * weight * holiday_weight
-                future_predictions.append(final_pred)
-            for idx, d in enumerate(future_dates):
-                if st.session_state.predict_saturday_as_zero and d.weekday() == 5:
-                    future_predictions[idx] = 0
-                if st.session_state.predict_sunday_as_zero and d.weekday() == 6:
-                    future_predictions[idx] = 0
-                if st.session_state.predict_weekends_as_zero and d.weekday() >= 5:
-                    future_predictions[idx] = 0
-                if st.session_state.predict_holidays_as_zero and d.date() in holiday_dates:
-                    future_predictions[idx] = 0
-            return future_dates, future_predictions
+                    st.error("Colonnes 'Projet' ou 'Capacité' non trouvées dans l'upload MyCapa.")
+                    df_eng = pd.DataFrame()
+            except Exception as e:
+                st.error(f"Erreur lecture Capacité Engagée (MyCapa) : {e}")
 
-    def blend_predictions(self, model_preds):
-        X_blend = np.column_stack(model_preds)
-        meta_learner = Ridge()
-        meta_learner.fit(X_blend, np.mean(X_blend, axis=1))
-        blended_preds = meta_learner.predict(X_blend)
-        return blended_preds
 
-class Application:
-    def __init__(self):
-        self.filepath = ""
+    # ----------------------------------------------------
+    # 2. Capacité Réelle (BigQuery - API)
+    # ----------------------------------------------------
+    with c2:
+        st.subheader("2️⃣ Capacité Réelle (BigQuery - API) 🎯")
+        df_reel = pd.DataFrame()
 
-    def run(self):
-        st.sidebar.title("🌟Navigation")
-        st.markdown(
-            """<style>
-            [data-testid="stSidebar"]{background:linear-gradient(to bottom,#92fbff,#008049);color:white;padding:20px;border-radius:10px;}
-            .sidebar-title{color:white !important;font-size:22px !important;font-weight:bold;text-align:center;}
-            [data-testid="stRadio"]{background:rgba(255,255,255,0.2);border-radius:10px;padding:10px;color:white;}
-            [role="radiogroup"] label div{background:#ff1744 !important;color:white !important;border-radius:10px;padding:10px;transition:0.3s;}
-            [role="radiogroup"] label div:hover{background:#ff4081 !important;}
-            </style>""", unsafe_allow_html=True)
-        menu = st.sidebar.radio(
-            "",
-            ["1-Accueil", "2-Chargez Historique", "3-Paramétrages & Prév"],
-            index=0
+        if "refresh_bq_capa" not in st.session_state:
+            st.session_state["refresh_bq_capa"] = 0
+
+        # Lancement de la requête BigQuery
+        # La fonction load_data_from_bigquery est mise en cache (ttl=3600), le bouton rafraîchit la session state
+        df_reel_raw = load_data_from_bigquery(BQ_PROJECT_ID, BQ_CAPA_QUERY)
+
+        if not df_reel_raw.empty:
+            df_reel = df_reel_raw.copy()
+
+            # Assurez-vous que les colonnes Projet et Capacité Réelle sont standardisées
+            if "Projet" in df_reel.columns and "Capacité_Réelle" in df_reel.columns:
+                df_reel["Projet"] = df_reel["Projet"].astype(str).str.strip().str.upper()
+                df_reel["Capacité Réelle"] = pd.to_numeric(df_reel["Capacité Réelle"], errors='coerce').fillna(0) # Nettoyage numérique
+                df_reel = df_reel.rename(columns={"Capacité_Réelle": "Capacité Réelle"})
+                st.success(f"Capacité Réelle chargée pour {len(df_reel)} projets depuis BigQuery.")
+            else:
+                st.error("Colonnes 'Projet' ou 'Capacité_Réelle' non trouvées dans le résultat BigQuery. Vérifiez votre requête SQL.")
+                df_reel = pd.DataFrame()
+        elif "refresh_bq_capa" in st.session_state and st.session_state["refresh_bq_capa"] != 0:
+             st.warning("La requête BigQuery n'a retourné aucune donnée. Vérifiez les permissions et la requête.")
+        else:
+             st.info("Cliquez sur 'Exécuter Requête BigQuery' pour charger les données réelles.")
+
+
+    # 3. Comparaison et Affichage
+    if not df_eng.empty and not df_reel.empty:
+        st.markdown("---")
+        st.subheader("Résultats de la Comparaison (Delta) 📈")
+
+        # Fusion des deux DataFrames sur la colonne 'Projet'
+        df_compare = pd.merge(
+            df_eng,
+            df_reel,
+            on="Projet",
+            how="outer"
+        ).fillna(0)
+
+        # Les colonnes sont déjà numériques grâce au nettoyage effectué précédemment
+        df_compare["Delta (Réel - Engagé)"] = df_compare["Capacité Réelle"] - df_compare["Capacité Engagée"]
+
+        # Gestion de la division par zéro
+        with np.errstate(divide='ignore', invalid='ignore'):
+            df_compare["% Delta (Réel / Engagé)"] = np.where(
+                df_compare["Capacité Engagée"] != 0,
+                (df_compare["Capacité Réelle"] / df_compare["Capacité Engagée"]) * 100,
+                np.nan
+            )
+
+        # Formatage pour l'affichage
+        df_compare = df_compare.sort_values("Delta (Réel - Engagé)", ascending=True)
+
+        # Métriques globales
+        total_eng = df_compare["Capacité Engagée"].sum()
+        total_reel = df_compare["Capacité Réelle"].sum()
+        total_delta = total_reel - total_eng
+
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Total Engagé", f"{total_eng:,.0f}")
+        col_m2.metric("Total Réel", f"{total_reel:,.0f}")
+        col_m3.metric(
+            "Delta Global (Réel - Engagé)",
+            f"{total_delta:,.0f}",
+            delta=f"{total_delta:,.0f} agents"
         )
-        st.markdown(
-            """<style>
-            body {
-                background: linear-gradient(to bottom, #074e56, #000000);
-            }
-            .stButton {
-                background-color: white !important;
-                color: #000 !important;
-                border-radius: 5px;
-                padding: 10px;
-            }
-            .stSidebar * {
-                color: white !important;
-            }
-            [role="radiogroup"] label div {
-                background: none !important;
-                color: white !important;
-                border-radius: 5px;
-                padding: 12px;
-                font-size: 16px;
-                font-weight: bold;
-                transition: all 0.3s ease-in-out;
-                margin-bottom: 5px !important;
-            }
-            [role="radiogroup"] label div:hover {
-                background: #074e56 !important;
-            }
-            input {
-                width: 100%;
-                padding: 10px;
-                margin-bottom: 15px;
-                border-radius: 5px;
-            }
-            </style>""", unsafe_allow_html=True)
-        if menu == "1-Accueil":
 
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col1:
-                try:
-                    left_banner = Image.open(r"C:\Users\dell\Desktop\Perso\BG.png")
-                    st.image(left_banner, width=150)
-                except Exception as e:
-                    st.write("Bannière Gauche")
-            with col2:
-                st.markdown('<div class="banner-container"></div>', unsafe_allow_html=True)
-            with col3:
-                try:
-                    right_banner = Image.open(r"C:\Users\dell\Desktop\Perso\banWFM1.png")
-                    st.image(right_banner, width=150)
-                except Exception as e:
-                    st.write("Bannière Droite")
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            st.markdown("""
-                <style>
-                @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-                @keyframes floating { 0% { transform: translateY(0px); } 50% { transform: translateY(-5px); } 100% { transform: translateY(0px); } }
-                .animated-card { padding: 30px; border-radius: 15px; width: 35%; text-align: center; color: white; margin-top: 50px; transition: transform 0.3s ease, background-color 0.3s ease; animation: fadeIn 1s ease-out, floating 3s infinite ease-in-out; }
-                .animated-card:nth-child(1) { background: linear-gradient(45deg, #ff758c, #ff7eb3); }
-                .animated-card:nth-child(2) { background: linear-gradient(45deg, #7a5fff, #a875ff); }
-                .animated-card:nth-child(3) { background: linear-gradient(45deg, #17ead9, #6078ea); }
-                .animated-card:hover { transform: scale(1.05); }
-                .container { display: flex; justify-content: center; gap: 10px; margin: 10px 0; }
-                .title { text-align: center; font-size: 32px; font-weight: bold;margin-top: 0px; margin-bottom: 30px; color: #333; }
-                </style>
-                <div class="title"></div>
-                <div class="title"> </div>
-                """, unsafe_allow_html=True)
-            video_path =  r"C:\Users\dell\Desktop\Perso\bg-bullet-animation-1920x800.mp4"
-            st.markdown(f"""
-                <style>
-                    .video-container {{
-                        position: relative;
-                        width: 100%;
-                        height: 55vh;
-                        overflow: hidden;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                    }}
-                    .video-container video {{
-                        position: absolute;
-                        top: 60%;
-                        left: 50%;
-                        transform: translate(-50%, -50%);
-                        min-width: 100%;
-                        min-height: 100%;
-                        object-fit: cover;
-                        filter: brightness(90%);
-                    }}
-                    .video-text {{
-                        position: absolute;
-                        color: white;
-                        left: 0%;
-                        font-size: 25px;
-                        font-weight: bold;
-                        z-index: 2;
-                        max-width: 100%;
-                        padding: 20px;
-                        background: rgba(0, 0, 100, 0.5);
-                        border-radius: 10px;
-                    }}
-                </style>
-                <div class="video-container">
-                    <video autoplay loop muted>
-                        <source src="data:video/mp4;base64,{base64.b64encode(open(video_path, 'rb').read()).decode()}" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                    <div class="video-text">
-                        HIMA - High Integrated Moving Algorithms
-                        <div style="margin-top: 7px; color: red;"> A smart Way to predict the futur</div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            st.markdown("""
-                <div class="container">
-                    <div class="animated-card">
-                        <h3>Intelcia</h3>
-                        <p>L’aventure Intelcia est née de l’audace d’une poignée de visionnaires de transformer un centre de contact d’un pays du Sud en un leader mondial de l’outsourcing. Le tout en ayant un impact réel et positif sur les clients, les collaborateurs et l’ensemble de l’écosystème.</p>
-                    </div>
-                    <div class="animated-card">
-                        <h3>WFM</h3>
-                        <p>WLF joue un rôle clé dans la gestion des opérations en assurant une optimisation des ressources et une amélioration continue des performances</p>
-                    </div>
-                    <div class="animated-card">
-                        <h3>📖 HIMA</h3>
-                        <p>HIMA est une solution avancée développée par le département WFM d’Intelcia, combinant intelligence artificielle, machine learning et analyses avancées pour optimiser les prévisions et la gestion des effectifs.</p>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">INTELCIA ?</span></h2>""", unsafe_allow_html=True)
-            st.markdown('<p style="font-size: 18px; line-height: 1.6;">Depuis plus de 20 ans, nous accompagnons les entreprises dans leur transformation. Nous les aidons à accélérer leur croissance en leur permettant de se concentrer sur leurs enjeux et leur cœur de métier. Grâce à une association unique d’expertises et de talents, nous développons les solutions les mieux adaptées pour répondre aux défis actuels et futurs de nos clients. Ainsi nous avons un impact durable sur leur compétitivité.</p>', unsafe_allow_html=True)
-            st.subheader("")
-            with st.container():
-                try:
-                    photo1 = Image.open(r"C:\Users\dell\Desktop\Perso\mapintelcia.png")
-                    st.image(photo1, caption="", use_container_width=True)
-                except Exception as e:
-                    st.write("Photo 1 non disponible.")
-                try:
-                    photo_middle_path = r"C:\Users\dell\Desktop\Perso\KB.png"
-                    photo_middle_base64 = get_base64_image(photo_middle_path)
-                    st.markdown(f"""
-                        <div style="text-align: center;">
-                            <a href="https://youtu.be/DWOpWu6htY4" target="_blank">
-                                <img src="data:image/png;base64,{photo_middle_base64}" alt="Voir la suite" style="width:100%; max-width:600px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.2);">
-                            </a>
-                            <p style="font-size: 16px; font-weight: bold; color: #C23665;">Voir la suite</p>
-                        </div>
-                    """, unsafe_allow_html=True)
-                except Exception as e:
-                    st.write("Image non disponible.")
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">WFMR ?</span></h2>""", unsafe_allow_html=True)
-                st.markdown('<p style="font-size: 18px; line-height: 1.6;">Optimisez les horaires en quelques minutes. Les outils de planification simplifient la planification des équipes et responsabilisent les responsables.</p>', unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🚀 Prenez des décisions stratégiques basées sur des données précises et des analyses avancées.</p>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🤖 "Découvrez **HIMA**, l’application intelligente qui révolutionne la prévision des volumes d’appels grâce aux algorithmes de Machine Learning et Deep Learning, optimisée pour s’adapter aux variations du calendrier et aux tendances historiques avec une précision inégalée."</p>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">✅ "**HIMA** révolutionne la prévision des volumes d’appels en analysant les tendances historiques et les effets calendaires pour offrir des estimations précises et fiables."</p>""", unsafe_allow_html=True)
-                try:
-                    photo_mr_path = r"C:\Users\dell\Desktop\Perso\MR.png"
-                    photo_mr_base64 = get_base64_image(photo_mr_path)
-                    st.markdown(f"""
-                        <div style="text-align: center; margin-top: 30px;">
-                            <a href="https://urlr.me/Kbgv6m" target="_blank">
-                                <img src="data:image/png;base64,{photo_mr_base64}" alt="Voir plus" style="width:14cm; height:14cm; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.2);">
-                            </a>
-                            <p style="font-size: 16px; font-weight: bold; color: #C23665;">Cliquez ici pour voir plus</p>
-                        </div>
-                    """, unsafe_allow_html=True)
-                except Exception as e:
-                    st.write("Image MR non disponible.")
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                try:
-                    photo2 = Image.open(r"C:\Users\dell\Desktop\Perso\photo2.png")
-                    st.image(photo2, caption="", use_container_width=True)
-                except Exception as e:
-                    st.write("Photo 2 non disponible.")
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("""<h2 style="color:#C23665; font-weight: bold;">POURQUOI <span style="color:#C23665;">HIMA ?</span></h2>""", unsafe_allow_html=True)
-                st.markdown('<p style="font-size: 18px; line-height: 1.6;">Optimisez les horaires en quelques minutes. Les outils de planification simplifient la gestion des équipes et responsabilisent les managers.</p>', unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🚀 Prenez des décisions stratégiques basées sur des données précises et des analyses avancées.</p>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🤖 Grâce à l'IA, anticipez les besoins en effectifs et ajustez les plannings en temps réel.</p>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">✅ Optimisez les horaires en quelques minutes. Les outils de planification simplifient la gestion des équipes et responsabilisent les managers.</p>""", unsafe_allow_html=True)
-                st.markdown("""
-                <div class="container">
-                    <div class="animated-card" style="background: linear-gradient(45deg, #ff9a8b, #ff6a88);">
-                        <h3>📊 Analyse</h3>
-                        <p>Exploitez l'IA pour mieux comprendre, Avec l'analyse, les connaissances s'étendent. Les données dévoilent ce que l'on défend, Pour des choix éclairés, un avenir grandissant.</p>
-                    </div>
-                    <div class="animated-card" style="background: linear-gradient(45deg, #5b86e5, #36d1dc);">
-                        <h3>💡 Intelligence</h3>
-                        <p>Découvrez le potentiel de l'IA pour enrichir vos connaissances, Avec une analyse pointue, faites briller votre expertise. Les données deviennent vos alliées, révélant des tendances, Pour des choix stratégiques, construisez un avenir prometteur.</p>
-                    </div>
-                    <div class="animated-card" style="background: linear-gradient(45deg, #f4c4f3, #fc67fa);">
-                        <h3>⚙️ Forecasting</h3>
-                        <p>Ces algorithmes de pointe, basés sur le machine learning et le deep learning, sont spécialement conçus pour optimiser le forecasting des appels, améliorant ainsi la précision des prévisions et la gestion des ressources.</p>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("""<h2 style="color:#C23665; font-weight: bold;">REJOIGNEZ <span style="color:#C23665;">-NOUS ?</span></h2>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">Groupe multi-métier, multiculturel, multilingues, nous construisons avec les entreprises et les administrations des expériences utilisateurs uniques pour un lendemain meilleur.</p>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">Nous cultivons l’audace, la créativité et l’excellence, mais aussi la bienveillance et la solidarité. Nous rejoindre, c’est adhérer à ces valeurs qui sont au cœur de notre réussite.</p>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">🤖 Tout a été pensé pour leur permettre d’apprendre, de grandir et de s’épanouir au sein d’un leader mondial qui fait de l’agilité son fer de lance.</p>""", unsafe_allow_html=True)
-                st.markdown("""<p style="font-size: 18px; line-height: 1.6;">Nous avons 20 ans, et pour longtemps encore.</p>""", unsafe_allow_html=True)
-                st.markdown("<br><br>", unsafe_allow_html=True)
-##                video_path = r"C:\Users\dell\Desktop\Perso\Humain_Robot.mp4"
-##
-##                try:
-##                    with open(video_path, 'rb') as video_file:
-##                        video_bytes = video_file.read()
-##                        video_b64 = base64.b64encode(video_bytes).decode()
-##                    video_html = f"""
-##                    <div style="position: relative; display: inline-block; width: 400"; margin: 0 auto;">
-##                      <video width="1100px" controls autoplay loop muted style="display: block; margin: 0 auto;">
-##                        <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-##                        Votre navigateur ne supporte pas la balise vidéo.
-##                      </video>
-##                      <div style="position: absolute; bottom: 80px; right: 450px; color: White; font-size: 24px; ">
-##                        HIMA By WFM
-##                      </div>
-##                    </div>
-##                    """
-##                    st.markdown(video_html, unsafe_allow_html=True)
-##                except Exception as e:
-##                    st.error(f"Erreur lors du chargement de la vidéo  : {e}")
+        st.markdown("---")
 
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown("<br><br>", unsafe_allow_html=True)
+        # Affichage du tableau de comparaison
+        st.subheader("Détail par Projet")
+        display_df = df_compare.style.format({
+            "Capacité Engagée": "{:,.0f}",
+            "Capacité Réelle": "{:,.0f}",
+            "Delta (Réel - Engagé)": "{:,.0f}",
+            "% Delta (Réel / Engagé)": lambda x: f"{x:,.1f}%" if pd.notna(x) else "N/A"
+        })
 
-                linkedin_base64 = get_base64_image(r"C:\Users\dell\Desktop\Perso\linkedin.png")
-                intelcia_base64 = get_base64_image(r"C:\Users\dell\Desktop\Perso\Instagram_icon.png")
-                st.markdown(f"""
-                <style>
-                .footer {{
-                    background: linear-gradient(to right, #dd6aa4, #87559e);
-                    padding: 40px;
-                    color: white;
-                    text-align: left;
-                    width: 100%;
-                    position: relative;
-                }}
-                .footer-container {{
-                    display: flex;
-                    justify-content: space-between;
-                    max-width: 1600px;
-                    margin: auto;
-                }}
-                .footer-section {{
-                    flex: 1;
-                    margin: 0 30px;
-                }}
-                h3 {{
-                    margin-bottom: 10px;
-                    font-size: 16px;
-                }}
-                .footer a {{
-                    color: white;
-                    text-decoration: none;
-                    font-size: 14px;
-                }}
-                a:hover {{
-                    text-decoration: underline;
-                }}
-                .footer .footer-end {{
-                    text-align: center;
-                    margin-top: 20px;
-                    font-size: 12px;
-                }}
-                .footer .social-links {{
-                    margin-top: 10px;
-                }}
-                .footer .social-links a {{
-                    margin-right: 15px;
-                }}
-                </style>
-                <div class="footer">
-                    <div class="footer-container">
-                        <div class="footer-section">
-                            <h3>NOUS CONNAÎTRE</h3>
-                            <a href="https://www.intelcia.com/fr/decouvrez-intelcia" target="_blank">À propos d'Intelcia</a><br>
-                            <a href="https://www.intelcia.com/fr/mentions-legales" target="_blank">Politique de confidentialité</a><br>
-                            <a href="https://www.intelcia.com/fr/mentions-legales" target="_blank">Mentions légales</a>
-                        </div>
-                        <div class="footer-section" style="text-align: left;">
-                            <h3>NOUS CONTACTER</h3>
-                            <a href="https://www.intelcia.com/fr/contactez-nous" target="_blank">Contact</a><br>
-                            <a href="https://www.intelcia.com/fr/adresse" target="_blank">Adresse de nos sites</a>
-                        </div>
-                    </div>
-                    <div class="footer-end" style="margin-bottom: 20px;">
-                        <div class="social-links">
-                            <a href="https://www.intelcia.com/it" target="_blank">
-                                <img src="data:image/png;base64,{intelcia_base64}" alt="Intelcia" style="height: 20px;">
-                            </a>
-                            <a href="https://www.linkedin.com/company/intelcia/posts/?feedView=all" target="_blank">
-                                <img src="data:image/png;base64,{linkedin_base64}" alt="LinkedIn" style="height: 20px;">
-                            </a>
-                        </div>
-                        <br>
-                        © 2025 Intelcia group | Developed by Hicham TALA & Nasreddine Quhila<br>
-                    </div>
-                    </div>
+        st.dataframe(display_df, use_container_width=True)
 
-                """, unsafe_allow_html=True)
-        elif menu == "2-Chargez Historique":
-            st.sidebar.success("""
-            ## 📖 info fichier d'upload'
-            - **Upload 📂** :  Veuillez télécharger le fichier CSV contenant deux colonnes (Date et volume) avec un point-virgule ";" comme délimiteur.
-            ---
-            """)
-            st.header("📊 Chargement et préparation des données")
-            uploaded_file = st.file_uploader("Charger Fichier CSV", type=["csv"])
-            if uploaded_file is not None:
-                st.session_state.filepath = uploaded_file
-                st.success(f"Fichier chargé : {uploaded_file.name}")
-                try:
-                    temp_file = "temp_uploaded_file.csv"
-                    with open(temp_file, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    predictor = FTTHPredictor(seq_length=20, prediction_type=st.session_state.prediction_type)
-                    data, data_scaled, scaler, weekday_weights = predictor.load_and_preprocess_data(
-                        temp_file,
-                        holidays_list=st.session_state.holidays,
-                        holiday_weights=st.session_state.holiday_weights,
-                        outlier_dates=st.session_state.outliers,
-                        predict_holidays_as_zero=False,
-                        predict_weekends_as_zero=False,
-                        predict_saturday_as_zero=False,
-                        predict_sunday_as_zero=False,
-                        working_hours=(8, 18)
-                    )
-                    if data is not None:
-                        st.subheader("")
-                        import seaborn as sns
-                        import seaborn as sns
-                        import matplotlib.pyplot as plt
+        st.download_button(
+            "💾 Télécharger la Comparaison (CSV)",
+            data=to_csv_bytes(df_compare),
+            file_name="comparaison_capacite_delta.csv",
+            mime="text/csv"
+        )
 
-                        data['day_name'] = data['date'].dt.day_name()
-                        ordered_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                        day_colors = {
-                            'Monday': '#3498db',
-                            'Tuesday': '#2ecc71',
-                            'Wednesday': '#f1c40f',
-                            'Thursday': '#e67e22',
-                            'Friday': '#9b59b6',
-                            'Saturday': '#e74c3c',
-                            'Sunday': '#34495e'
-                        }
-                        palette = [day_colors[d] for d in ordered_days]
-                        with st.expander("Box-plot par jour de la semaine"):
-                            fig, ax = plt.subplots(figsize=(8,6))
-                            sns.boxplot(
-                                x='day_name',
-                                y='volume',
-                                data=data,
-                                order=ordered_days,
-                                palette=palette,
-                                ax=ax
-                            )
-                            ax.set_title("Répartition du Volume par Jour de la Semaine")
-                            ax.set_xlabel("Jour de la Semaine")
-                            ax.set_ylabel("Volume")
-                            st.pyplot(fig)
+# =========================================================
+# ⑥ VALIDATION (KPI BIGQUERY)
+# =========================================================
+with t4:
+    st.header("✅ Étape 6 : Validation des KPIs (BigQuery)")
+    st.markdown("""
+    <div class='note'>
+        Utilisez cette section pour charger les KPIs de validation (Ex: SLA, Taux de conformité)
+        directement depuis votre entrepôt de données BigQuery.
+    </div>
+    """, unsafe_allow_html=True)
 
-                    else:
-                        st.error("Erreur lors du prétraitement des données.")
-                except Exception as e:
-                    logging.error(f"Erreur lors du chargement du fichier : {e}")
-                    st.error(f"Erreur lors du chargement du fichier : {e}")
-                finally:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
-            else:
-                st.info("Veuillez charger un fichier CSV pour continuer.")
-        elif menu == "3-Paramétrages & Prév":
+    # --- Configuration BigQuery (Utilise le même PROJECT_ID) ---
+    BQ_PROJECT_ID = "dda-dpl-wfm-prd-hf"
 
-            st.header("🔮 Prévisions")
-            st.sidebar.markdown("""
-                ## ⚙️ Paramètres de Prévision
-                - **Jours Fériés** : Indiquez les dates où l'activité est réduite ou nulle.
-                - **Poids** : Ajustez l'impact d’un jour férié.
-                - **Valeurs Aberrantes** : Détection et correction des anomalies.
-                - **Prédictions à 0** : Option pour fixer à 0 certains jours.
-                ---
-            """, unsafe_allow_html=True)
-            st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
-            st.markdown("### Gestion des Jours Fériés")
-            col1, col2 = st.columns(2)
-            with col1:
-                holiday_date = st.date_input("Ajouter un jour férié :", key="holiday_date")
-            with col2:
-                if st.button("Déclarer Jour Férié"):
-                    formatted_holiday = holiday_date.strftime('%Y-%m-%d')
-                    if formatted_holiday not in st.session_state.holidays:
-                        st.session_state.holidays.append(formatted_holiday)
-                        st.session_state.holiday_weights.append(100)
-                        st.success(f"Jour férié ajouté : {formatted_holiday}")
-            if st.session_state.holidays:
-                st.subheader("Liste des Jours Fériés avec Poids")
-                for idx, holiday in enumerate(st.session_state.holidays):
-                    col_a, col_b, col_c = st.columns([3, 2, 1])
-                    with col_a:
-                        st.write(holiday)
-                    with col_b:
-                        weight = st.slider(f"Poids pour {holiday}", 0, 100, st.session_state.holiday_weights[idx], key=f"weight_{holiday}")
-                        st.session_state.holiday_weights[idx] = weight
-                    with col_c:
-                        if st.button(f"Remove {holiday}", key=f"remove_{holiday}"):
-                            st.session_state.holidays.pop(idx)
-                            st.session_state.holiday_weights.pop(idx)
-                            st.success(f"Jour férié supprimé : {holiday}")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
-            st.markdown("### Gestion des Valeurs Hors Normes")
-            col1, col2 = st.columns(2)
-            with col1:
-                outlier_date = st.date_input("Ajouter une valeur aberrante :", key="outlier_date")
-            with col2:
-                if st.button("Ajouter la valeur aberrante"):
-                    formatted_outlier = outlier_date.strftime('%Y-%m-%d')
-                    if formatted_outlier not in st.session_state.outliers:
-                        st.session_state.outliers.append(formatted_outlier)
-                        st.success(f"Valeur aberrante ajoutée : {formatted_outlier}")
-            if st.session_state.outliers:
-                st.subheader("Liste des Valeurs Aberrantes")
-                for idx, outlier in enumerate(st.session_state.outliers):
-                    col_a, col_b = st.columns([3, 1])
-                    with col_a:
-                        st.write(outlier)
-                    with col_b:
-                        if st.button(f"Remove {outlier}", key=f"remove_outlier_{outlier}"):
-                            st.session_state.outliers.pop(idx)
-                            st.success(f"Valeur aberrante supprimée : {outlier}")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
-            st.markdown("### Granularité")
-            if 'prediction_type' not in st.session_state:
-                st.session_state.prediction_type = "Jour"
-            selected_prediction_type = st.selectbox("Choisir le type de prédiction :", ["Jour", "tranche"], key="prediction_type")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
-            st.markdown("### Amplitude Horaires (De - à)")
-            col1, col2 = st.columns(2)
-            with col1:
-                if 'working_hours_start' not in st.session_state:
-                    st.session_state.working_hours_start = "08:00"
-                selected_working_start = st.selectbox("Début :", [f"{h:02d}:{m:02d}" for h in range(24) for m in [0,15,30,45]], index=8, key="working_hours_start")
-            with col2:
-                if 'working_hours_end' not in st.session_state:
-                    st.session_state.working_hours_end = "18:00"
-                selected_working_end = st.selectbox("Fin :", [f"{h:02d}:{m:02d}" for h in range(24) for m in [0,15,30,45]], index=18, key="working_hours_end")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div style="background-color:#085a89; border:1px solid #4CAF50; padding:10px; border-radius:5px; margin-bottom:10px;">', unsafe_allow_html=True)
-            st.markdown("### Gestion JF & Week-end")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                predict_holidays_as_zero = st.checkbox("Prédire JF comme 0", value=False, key="predict_holidays_as_zero")
-            with col2:
-                predict_saturday_as_zero = st.checkbox("Prédire samedis comme 0", value=False, key="predict_saturday_as_zero")
-            with col3:
-                predict_sunday_as_zero = st.checkbox("Prédire dimanches comme 0", value=False, key="predict_sunday_as_zero")
-            with col4:
-                predict_weekends_as_zero = st.checkbox("Prédire week-ends comme 0", value=False, key="predict_weekends_as_zero")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div style="border-top: 6px solid #004080; margin-top: 15px; margin-bottom: 25px;"></div>', unsafe_allow_html=True)
-            if "filepath" not in st.session_state or st.session_state.filepath is None:
-                st.error("Veuillez d'abord charger un fichier dans la section 'Chargement des données'.")
-            else:
-                start_date = st.date_input("Date de Début Prévision :", key="start_date")
-                end_date = st.date_input("Date de Fin Prévision :", key="end_date")
-                if st.button("🚀 Lancer la prévision"):
-                    try:
-                        if start_date >= end_date:
-                            raise ValueError("La date de début doit être avant la date de fin.")
-                        seq_length = 5
-                        all_holidays = [pd.Timestamp(holiday) for holiday in st.session_state.holidays]
-                        holiday_weights = st.session_state.holiday_weights
-                        outlier_dates = [pd.Timestamp(outlier) for outlier in st.session_state.outliers]
-                        predictor = FTTHPredictor(seq_length, st.session_state.prediction_type)
-                        temp_file = "temp_uploaded_file.csv"
-                        with open(temp_file, "wb") as f:
-                            f.write(st.session_state.filepath.getbuffer())
-                        data, data_scaled, scaler, weekday_weights = predictor.load_and_preprocess_data(
-                            temp_file,
-                            holidays_list=all_holidays,
-                            holiday_weights=holiday_weights,
-                            outlier_dates=outlier_dates,
-                            predict_holidays_as_zero=st.session_state.predict_holidays_as_zero,
-                            predict_weekends_as_zero=st.session_state.predict_weekends_as_zero,
-                            predict_saturday_as_zero=st.session_state.predict_saturday_as_zero,
-                            predict_sunday_as_zero=st.session_state.predict_sunday_as_zero,
-                            working_hours=(int(st.session_state.working_hours_start.split(':')[0]),
-                                           int(st.session_state.working_hours_end.split(':')[0]))
-                        )
-                        if data is None:
-                            raise ValueError("Prétraitement des données échoué.")
-                        st.subheader("📊 Avancement...")
-                        if len(data) <= seq_length:
-                            seq_length = max(1, len(data) - 1)
-                        train_data, test_data = predictor.split_train_test(data_scaled, train_ratio=0.8)
-                        X_train_seq, y_train_seq = predictor.create_sequences(train_data)
-                        X_test_seq, y_test_seq = predictor.create_sequences(test_data)
-                        if len(X_train_seq) == 0 or len(y_train_seq) == 0:
-                            raise ValueError("Pas assez de séquences créées. Veuillez fournir plus de points de données ou ajuster la longueur de la séquence.")
-                        models = {}
-                        progress_bar = st.progress(0)
-                        progress_text = st.empty()
-                        if st.session_state.prediction_type == 'tranche':
-                            model_types = ['elasticnet']  #'timexer','svr', 'huber', 'elasticnet','nhits','softs','llama'
-                        else:
-                            model_types =  ['elasticnet']
-                        total_models = len(model_types)
-                        completed = 0
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
-                        with ThreadPoolExecutor() as executor:
-                            future_models = {executor.submit(predictor.train_model, X_train_seq, y_train_seq, m_type): m_type for m_type in model_types}
-                            for future in as_completed(future_models):
-                                m_type = future_models[future]
-                                try:
-                                    models[m_type] = future.result()
-                                except Exception as e:
-                                    logging.error(f"Erreur lors de l'entraînement de {m_type} : {e}")
-                                    st.error(f"Erreur lors de l'entraînement de {m_type} : {e}")
-                                completed += 1
-                                progress = int((completed / total_models) * 100)
-                                progress_bar.progress(progress)
-                                progress_text.write(f"Progression : {progress}%")
-                            progress_text.write("✅ Entraînement terminé !")
-                            st.success("Tous les modèles ont été entraînés avec succès ! 🎉")
-                        best_model_name = None
-                        best_r2 = float('-inf')
-                        results = {}
-                        model_preds = []
-                        with st.spinner("📊 Évaluation des modèles..."):
-                            for m_name, model in models.items():
-                                if model is None:
-                                    continue
-                                try:
-                                    if m_name.lower() in ["arrima", "sarima"]:
-                                        n_steps = X_test_seq.shape[0]
-                                        y_pred = model.forecast(steps=n_steps)
-                                    elif m_name.lower() in ["catboost",  "svr", "adaboost", "huber", "ridge",  "ensemble", "elasticnet", 'lightgbm']:
-                                        X_test_reshaped = X_test_seq.reshape((X_test_seq.shape[0], -1))
-                                        y_pred = model.predict(X_test_reshaped)
-                                    else:
-                                        y_pred = model.predict(X_test_seq)
-                                    y_test_inv = scaler.inverse_transform(y_test_seq.reshape(-1, 1))
-                                    y_pred_inv = scaler.inverse_transform(np.array(y_pred).reshape(-1, 1))
-                                    y_pred_inv = np.clip(y_pred_inv, 0, None)
-                                    r2 = r2_score(y_test_inv, y_pred_inv)
-                                    mae = mean_absolute_error(y_test_inv, y_pred_inv)
-                                    results[m_name] = {"R2": r2, "MAE": mae}
-                                    model_preds.append(y_pred_inv.flatten())
-                                    if r2 > best_r2:
-                                        best_r2 = r2
-                                        best_model_name = m_name
-                                except Exception as e:
-                                    logging.error(f"Erreur lors de la prédiction avec {m_name} : {e}")
-                                    st.error(f"Erreur lors de la prédiction avec {m_name} : {e}")
-                        if best_model_name:
-                            future_dates, future_predictions = predictor.predict_future(
-                                models[best_model_name], data_scaled, scaler, start_date, end_date, all_holidays,
-                                holiday_weights, outlier_dates,
-                                st.session_state.predict_holidays_as_zero,
-                                st.session_state.predict_weekends_as_zero,
-                                st.session_state.predict_saturday_as_zero,
-                                st.session_state.predict_sunday_as_zero,
-                                (int(st.session_state.working_hours_start.split(':')[0]), int(st.session_state.working_hours_end.split(':')[0])),
-                                model_type=best_model_name, weekday_weights=weekday_weights
-                            )
-                            st.success("✅ Prédiction terminée. Résultats sauvegardés.")
-                            st.write(f"Résultats : Meilleur modèle {best_model_name} avec R² : {best_r2 * 100:.2f}% et MAE : {results[best_model_name]['MAE']:.2f}")
-                            ###ici masquer algo
-                            df_predictions = pd.DataFrame({"Date": future_dates, "Forecast": future_predictions})
-                            df_predictions["Day"] = df_predictions["Date"].dt.date
+    # --- REQUÊTE KPI DE VALIDATION (À ADAPTER) ---
+    BQ_KPI_QUERY = f"""
+        SELECT
+            CAST(T2.Metric_Name AS STRING) AS KPI,
+            CAST(T2.Value AS FLOAT64) AS Valeur,
+            CAST(T2.Reference_Date AS DATE) AS Date
+        FROM
+            -- ⚠️ MODIFIEZ CECI : `dda-dpl-wfm-prd-hf.votre_dataset_gold.votre_table_validation_kpis`
+            `{BQ_PROJECT_ID}.votre_dataset_gold.votre_table_validation_kpis` AS T2
+        WHERE
+            T2.Reference_Date = CURRENT_DATE() - 1 -- Exemple: KPIs de la veille
+            AND T2.Metric_Name IN ('SLA', 'Conformité Planning', 'Adhérence')
+    """
+
+    st.markdown("### ⚙️ Requête SQL BigQuery pour KPIs de Validation")
+    st.code(BQ_KPI_QUERY, language="sql")
+
+    c_bq_btn, c_bq_info = st.columns([1, 3])
+    with c_bq_btn:
+        if st.button("🔌 Charger les KPIs de Validation", key="load_kpis_btn"):
+            with st.spinner('Chargement des KPIs depuis BigQuery...'):
+                df_kpis = load_data_from_bigquery(BQ_PROJECT_ID, BQ_KPI_QUERY)
+                st.session_state["kpis_data"] = df_kpis
+                st.session_state["kpis_load_time"] = datetime.now().strftime("%H:%M:%S")
+
+    with c_bq_info:
+        if "kpis_load_time" in st.session_state:
+            st.success(f"✅ KPIs chargés. Dernier rafraîchissement : {st.session_state['kpis_load_time']}")
+
+    # --- Affichage des KPIs ---
+    df_kpis = st.session_state.get("kpis_data", pd.DataFrame())
+
+    if not df_kpis.empty:
+        st.markdown("---")
+        st.subheader("Résultats des KPIs de Validation 🎯")
+
+        # Affichage des métriques si le format est simple (KPI, Valeur, Date)
+        if all(col in df_kpis.columns for col in ["KPI", "Valeur"]):
+            # On prend un maximum de 4 colonnes pour la présentation
+            unique_kpis = df_kpis["KPI"].unique()
+            num_cols = min(len(unique_kpis), 4)
+            kpi_cols = st.columns(num_cols)
+
+            for i, kpi_name in enumerate(unique_kpis):
+                row = df_kpis[df_kpis["KPI"] == kpi_name].iloc[0]
+                kpi_value = row["Valeur"]
+
+                # Formattage conditionnel : pourcentages
+                if "SLA" in kpi_name or "Adhérence" in kpi_name or "Conformité" in kpi_name:
+                    display_value = f"{kpi_value:.1f}%"
+                else:
+                    display_value = f"{kpi_value:,.2f}"
+
+                delta_val = None # La colonne Target/Précédent n'est pas dans la requête actuelle
+
+                with kpi_cols[i % num_cols]: # Assure la distribution des métriques
+                    st.metric(kpi_name, display_value, delta=delta_val)
+
+            st.markdown("---")
+            st.info("Tableau détaillé des KPIs :")
+            st.dataframe(df_kpis, use_container_width=True)
+
+        else:
+            st.error("Le format des colonnes KPI n'est pas standard (attendu: 'KPI', 'Valeur', 'Date'). Affichage brut :")
+            st.dataframe(df_kpis, use_container_width=True)
+
+    elif "kpis_load_time" in st.session_state and st.session_state["kpis_load_time"] != 0:
+        st.warning("⚠️ La requête BigQuery a retourné un DataFrame vide. Vérifiez la requête et la disponibilité des données.")
 
 
-                            holiday_dates = [pd.to_datetime(h).date() for h in st.session_state.holidays]
-                            for idx, d in enumerate(future_dates):
-                                if st.session_state.predict_saturday_as_zero and d.weekday() == 5:
-                                    future_predictions[idx] = 0
-                                if st.session_state.predict_sunday_as_zero and d.weekday() == 6:
-                                    future_predictions[idx] = 0
-                                if st.session_state.predict_weekends_as_zero and d.weekday() >= 5:
-                                    future_predictions[idx] = 0
-                                if st.session_state.predict_holidays_as_zero and d.date() in holiday_dates:
-                                    future_predictions[idx] = 0
-                            df_predictions = pd.DataFrame({"Date": future_dates, "Forecast": future_predictions})
-                            df_history = pd.DataFrame({
-                                "Date": list(data["date"]) + list(future_dates),
-                                "Volume": list(data["volume"]) + list(future_predictions),
-                                "Type": ["Historique"] * len(data) + ["Prévision"] * len(future_dates)
-                            })
-                            fig_forecast = go.Figure()
-                            fig_forecast.add_trace(go.Scatter(
-                                x=df_predictions["Date"], y=df_predictions["Forecast"],
-                                mode="lines+markers", name="Forecast",
-                                marker=dict(color="lightgreen")
-                            ))
-                            fig_forecast.update_layout(
-                                title="Prévisions Interactives",
-                                xaxis_title="Date",
-                                yaxis_title="Volume",
-                                paper_bgcolor="#0a2832",
-                                plot_bgcolor="#0a2832",
-                                font=dict(color="white")
-                            )
-                            st.plotly_chart(fig_forecast, use_container_width=True)
-                            df_tranche = df_predictions.copy()
-                            df_tranche["Hour"] = df_tranche["Date"].dt.hour
-                            output = io.BytesIO()
-                            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                                import matplotlib.pyplot as plt
-
-                                historical_start = data["date"].min().date()
-                                historical_end = data["date"].max().date()
-                                df_dates = pd.DataFrame({
-                                    "Type": ["Historique", "Prévision"],
-                                    "Date début": [str(historical_start), str(start_date)],
-                                    "Date fin": [str(historical_end), str(end_date)]
-                                })
-                                df_dates.to_excel(writer, sheet_name="Dates", index=False)
-                                fig, ax = plt.subplots(figsize=(10, 5))
-                                df_history[df_history["Type"] == "Historique"].plot(
-                                    x="Date", y="Volume", ax=ax, color="blue", label="Historique"
-                                )
-                                df_history[df_history["Type"] == "Prévision"].plot(
-                                    x="Date", y="Volume", ax=ax, color="green", label="Prévision"
-                                )
-                                ax.set_title("Historique vs Prévision")
-                                ax.legend()
-                                graph_bytes = io.BytesIO()
-                                plt.savefig(graph_bytes, format="png", bbox_inches="tight")
-                                plt.close(fig)
-                                graph_bytes.seek(0)
-                                img_data = graph_bytes.read()
-                                workbook = writer.book
-                                worksheet_graph = workbook.add_worksheet("Graph")
-                                worksheet_graph.insert_image("A1", "graph.png", {'image_data': io.BytesIO(img_data)})
-                                df_history.to_excel(writer, sheet_name="Historique & Graph", index=False)
-                                worksheet_history = writer.sheets["Historique & Graph"]
-                                worksheet_history.insert_image("G2", "graph.png", {'image_data': io.BytesIO(img_data)})
-                                df_daily = data.groupby(data["date"].dt.date)["volume"].sum().reset_index()
-                                df_daily.columns = ["Date", "Volume"]
-                                df_daily.to_excel(writer, sheet_name="Volume Jour", index=False)
-                            output.seek(0)
-                            excel_data = output.getvalue()
-                            timestamp = datetime.now().strftime("%H_%M_%S_%d_%m_%Y")
-                            st.download_button(
-                                label="📥 Télécharger les Prédictions",
-                                data=excel_data,
-                                file_name=f"HIMA_prediction_{timestamp}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                            st.markdown("---")
-                            col1, col2, col3 = st.columns([1, 2, 1])
-                            with col1:
-                                try:
-                                    banner = Image.open(r"C:\Users\dell\Desktop\Perso\CE.png")
-                                    new_size = (banner.width // 2, banner.height // 2)
-                                    banner_resized = banner.resize(new_size, Image.Resampling.LANCZOS)
-                                    st.image(banner_resized, caption="© 2025 HIMA_By_WFM", width=new_size[0])
-                                except Exception as e:
-                                    logging.error(f"Erreur lors du chargement du bandeau: {e}")
-                    except Exception as e:
-                        st.error(f"Erreur lors de la prévision : {e}")
-                    finally:
-                        if os.path.exists(temp_file):
-                            os.remove(temp_file)
-
-if __name__ == "__main__":
-    app = Application()
-    app.run()
+# =========================================================
+# PLACEHOLDERS POUR LES AUTRES ONGLETS
+# =========================================================
+with t1:
+    st.header("📥 Inputs Center")
+    st.info("Cette fonctionnalité sera implémentée ultérieurement")
+with t2:
+    st.header("📊 Analyse 4 semaines")
+    st.info("Cette fonctionnalité sera implémentée ultérieurement")
+with t3:
+    st.header("🧮 Scénarios S1/S2")
+    st.info("Cette fonctionnalité sera implémentée ultérieurement")
+with t5:
+    st.header("📤 Répartition")
+    st.info("Cette fonctionnalité sera implémentée ultérieurement")
