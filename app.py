@@ -298,7 +298,7 @@ with t0:
 
     # 1. Lecture EFFECTIF (Feuille: The teams|Les équipes)
     EFF_SHEET = "The teams|Les équipes"
-    eff_upload = st.file_uploader(f"Uploader Effectif Total (Feuille: **{EFF_SHEET}**)", type=["xlsx"], key="eff_upl_1")
+    eff_upload = st.file_uploader(f"Insérez Effectif_Total(Feuille: **{EFF_SHEET}**)", type=["xlsx"], key="eff_upl_1")
     df_eff = pd.DataFrame()
     if eff_upload:
         try:
@@ -318,7 +318,7 @@ with t0:
 
     # 2. Lecture CONGÉS (Feuille: Détail par agent - Agent Detail)
     CONG_SHEET = "Détail par agent - Agent Detail"
-    cong_upload = st.file_uploader(f"Uploader Congés (Feuille: **{CONG_SHEET}**)", type=["xlsx"], key="cong_upl_1")
+    cong_upload = st.file_uploader(f"Insérez Quota_Congé (Feuille: **{CONG_SHEET}**)", type=["xlsx"], key="cong_upl_1")
     df_cong = pd.DataFrame()
     if cong_upload:
         try:
