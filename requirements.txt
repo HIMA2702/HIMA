@@ -1,23 +1,9 @@
-tensorflow-cpu==2.19.0
-torch==2.6.0
-catboost
+streamlit
+pandas
+numpy
+openpyxl
+google-cloud-bigquery
+google-auth
+openai
 
-lightgbm==3.3.5
-optuna==3.1.1
-statsmodels==0.13.5
-holidays==0.24
-chardet==5.1.0
-plotly==5.14.1
-seaborn==0.12.2
-matplotlib==3.7.1
-pandas==2.1.1
-scikit-learn==1.2.2
-Pillow==9.5.0
-xlsxwriter==3.0.9
-darts==0.23.1
 
-# Use a newer neuralforecast (3.x) so we don’t conflict on protobuf.
-neuralforecast==3.0.0
-
-# Finally, Streamlit
-streamlit==1.24.1
